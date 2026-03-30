@@ -9,10 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_role
+from app.core.security import hash_password
 from app.db.engine import get_session
+from app.models.public.user import Tenant, User
 from app.models.tenant.department import Department
 from app.models.tenant.doctor import Doctor
-from app.schemas.doctor import DoctorCreate, DoctorRead, DoctorUpdate
+from app.schemas.doctor import DoctorCreate, DoctorOnboard, DoctorRead, DoctorUpdate
 
 router = APIRouter()
 
@@ -52,6 +54,57 @@ async def create_doctor(
     _: dict = Depends(require_role("hospital_admin", "super_admin")),
 ):
     doctor = Doctor(id=uuid.uuid4(), **payload.model_dump())
+    session.add(doctor)
+    await session.commit()
+    await session.refresh(doctor)
+    return await _enrich(doctor, session)
+
+
+@router.post("/onboard", response_model=DoctorRead, status_code=status.HTTP_201_CREATED)
+async def onboard_doctor(
+    payload: DoctorOnboard,
+    session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(require_role("hospital_admin", "super_admin")),
+):
+    """Create a doctor login account + doctor profile in one step."""
+    # Resolve tenant from JWT
+    tenant_schema: str = current_user.get("tenant_schema", "")
+    tenant = (await session.execute(
+        select(Tenant).where(Tenant.schema_name == tenant_schema)
+    )).scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Tenant not found")
+
+    # Check email uniqueness
+    existing = (await session.execute(
+        select(User).where(User.email == payload.email)
+    )).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail="A user with this email already exists")
+
+    # Create user account with doctor role
+    new_user = User(
+        id=uuid.uuid4(),
+        tenant_id=tenant.id,
+        email=payload.email,
+        hashed_password=hash_password(payload.password),
+        full_name=payload.full_name,
+        role="doctor",
+    )
+    session.add(new_user)
+    await session.flush()  # get new_user.id
+
+    # Create doctor profile
+    doctor = Doctor(
+        id=uuid.uuid4(),
+        user_id=new_user.id,
+        full_name=payload.full_name,
+        specialization=payload.specialization,
+        department_id=payload.department_id,
+        consultation_fee=payload.consultation_fee,
+        qualification=payload.qualification,
+        experience_years=payload.experience_years,
+    )
     session.add(doctor)
     await session.commit()
     await session.refresh(doctor)

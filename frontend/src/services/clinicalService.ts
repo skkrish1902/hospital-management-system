@@ -62,6 +62,18 @@ export const doctorService = {
     experience_years?: number
   }) => apiClient.post<Doctor>('/doctors', data).then(r => r.data),
 
+  /** Creates login account (role=doctor) + doctor profile in one step. */
+  onboard: (data: {
+    email: string
+    password: string
+    full_name: string
+    specialization: string
+    department_id?: string
+    consultation_fee?: number
+    qualification?: string
+    experience_years?: number
+  }) => apiClient.post<Doctor>('/doctors/onboard', data).then(r => r.data),
+
   update: (id: string, data: Partial<{
     full_name: string
     specialization: string

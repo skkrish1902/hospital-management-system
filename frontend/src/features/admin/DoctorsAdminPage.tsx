@@ -8,7 +8,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import type { Department, Doctor } from '@/types/common'
-import { departmentService, doctorService, userService } from '@/services/clinicalService'
+import { departmentService, doctorService } from '@/services/clinicalService'
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -18,8 +18,10 @@ const deptSchema = z.object({
 })
 type DeptForm = z.infer<typeof deptSchema>
 
-const doctorSchema = z.object({
-  user_id: z.string().uuid('Must be a valid UUID'),
+// Used for the Create (onboard) form — includes login credentials
+const doctorOnboardSchema = z.object({
+  email: z.string().email('Valid email required'),
+  password: z.string().min(8, 'Minimum 8 characters'),
   full_name: z.string().min(1, 'Name required'),
   specialization: z.string().min(1, 'Specialization required'),
   department_id: z.string().uuid().optional().or(z.literal('')),
@@ -27,7 +29,18 @@ const doctorSchema = z.object({
   qualification: z.string().optional(),
   experience_years: z.coerce.number().min(0).max(60).optional(),
 })
-type DoctorForm = z.infer<typeof doctorSchema>
+type DoctorOnboardForm = z.infer<typeof doctorOnboardSchema>
+
+// Used for the Edit form — no credentials
+const doctorEditSchema = z.object({
+  full_name: z.string().min(1, 'Name required'),
+  specialization: z.string().min(1, 'Specialization required'),
+  department_id: z.string().uuid().optional().or(z.literal('')),
+  consultation_fee: z.coerce.number().min(0),
+  qualification: z.string().optional(),
+  experience_years: z.coerce.number().min(0).max(60).optional(),
+})
+type DoctorEditForm = z.infer<typeof doctorEditSchema>
 
 // ── Reusable components ────────────────────────────────────────────────────────
 
@@ -247,8 +260,8 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
     queryFn: () => doctorService.list({ include_inactive: showInactive }),
   })
 
-  const createMut = useMutation({
-    mutationFn: doctorService.create,
+  const onboardMut = useMutation({
+    mutationFn: doctorService.onboard,
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['doctors-admin'] }); setShowCreate(false) },
   })
   const updateMut = useMutation({
@@ -257,13 +270,12 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['doctors-admin'] }); setEditing(null) },
   })
 
-  const createForm = useForm<DoctorForm>({ resolver: zodResolver(doctorSchema) })
-  const editForm = useForm<DoctorForm>({ resolver: zodResolver(doctorSchema) })
+  const createForm = useForm<DoctorOnboardForm>({ resolver: zodResolver(doctorOnboardSchema) })
+  const editForm = useForm<DoctorEditForm>({ resolver: zodResolver(doctorEditSchema) })
 
   const openEdit = (doc: Doctor) => {
     setEditing(doc)
     editForm.reset({
-      user_id: doc.user_id,
       full_name: doc.full_name,
       specialization: doc.specialization,
       department_id: doc.department_id ?? '',
@@ -276,28 +288,10 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
   const deptMap: Record<string, string> = {}
   departments.forEach(d => { deptMap[d.id] = d.name })
 
-  const { data: doctorUsers = [] } = useQuery({
-    queryKey: ['users', 'doctor'],
-    queryFn: () => userService.list('doctor'),
-  })
-
-  const DoctorFormFields = ({ form }: { form: ReturnType<typeof useForm<DoctorForm>> }) => (
-    <div className="space-y-4">
-      <FormField label="User Account" error={form.formState.errors.user_id?.message}>
-        <select {...form.register('user_id')} className={inputCls}>
-          <option value="">— Select a user with doctor role —</option>
-          {doctorUsers.map(u => (
-            <option key={u.id} value={u.id}>
-              {u.full_name} ({u.email})
-            </option>
-          ))}
-        </select>
-        {doctorUsers.length === 0 && (
-          <p className="text-xs text-amber-600 mt-1">
-            No users with the &ldquo;doctor&rdquo; role found. Create one in the users table first.
-          </p>
-        )}
-      </FormField>
+  // Fields shared between create and edit.
+  // Typed as the superset (OnboardForm); edit form is cast at the call site.
+  const DoctorProfileFields = ({ form }: { form: ReturnType<typeof useForm<DoctorOnboardForm>> }) => (
+    <>
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Full Name" error={form.formState.errors.full_name?.message}>
           <input {...form.register('full_name')} className={inputCls} />
@@ -327,7 +321,7 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
           <input {...form.register('experience_years')} type="number" min={0} max={60} className={inputCls} />
         </FormField>
       </div>
-    </div>
+    </>
   )
 
   return (
@@ -407,22 +401,39 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
         <Modal title="Add Doctor" onClose={() => setShowCreate(false)}>
           <form
             onSubmit={createForm.handleSubmit(data =>
-              createMut.mutate({
+              onboardMut.mutate({
                 ...data,
                 department_id: data.department_id || undefined,
               })
             )}
             className="space-y-4"
           >
-            <DoctorFormFields form={createForm} />
+            {/* Login credentials — only on create */}
+            <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 space-y-3">
+              <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">Login Account</p>
+              <div className="grid grid-cols-2 gap-4">
+                <FormField label="Email" error={createForm.formState.errors.email?.message}>
+                  <input {...createForm.register('email')} type="email" className={inputCls} placeholder="doctor@hospital.in" />
+                </FormField>
+                <FormField label="Password" error={createForm.formState.errors.password?.message}>
+                  <input {...createForm.register('password')} type="password" className={inputCls} placeholder="Min 8 characters" />
+                </FormField>
+              </div>
+            </div>
+            <DoctorProfileFields form={createForm} />
+            {onboardMut.isError && (
+              <p className="text-xs text-red-600">
+                {(onboardMut.error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Failed to create doctor'}
+              </p>
+            )}
             <div className="flex justify-end gap-3 pt-2">
               <button type="button" onClick={() => setShowCreate(false)} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
               <button
                 type="submit"
-                disabled={createMut.isPending}
+                disabled={onboardMut.isPending}
                 className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
               >
-                {createMut.isPending ? 'Saving…' : 'Add Doctor'}
+                {onboardMut.isPending ? 'Saving…' : 'Add Doctor'}
               </button>
             </div>
           </form>
@@ -444,7 +455,7 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
             )}
             className="space-y-4"
           >
-            <DoctorFormFields form={editForm} />
+            <DoctorProfileFields form={editForm as unknown as ReturnType<typeof useForm<DoctorOnboardForm>>} />
             <div className="flex justify-end gap-3 pt-2">
               <button type="button" onClick={() => setEditing(null)} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
               <button
