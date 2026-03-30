@@ -1,3 +1,38 @@
+# ===== SECRETS — never commit =====
+.env
+*.env
+!.env.example
+
+# ===== Design/planning docs (large binaries) =====
+*.docx
+*.pdf
+*.pptx
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# ===== Node =====
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# ===== IDE =====
+.idea/
+*.swp
+.DS_Store
+
+# ===== Docker volumes =====
+infra/postgres_data/
+infra/redis_data/
+
+# ===== Logs =====
 # Logs
 logs
 *.log
