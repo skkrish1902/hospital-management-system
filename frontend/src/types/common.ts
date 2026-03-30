@@ -170,3 +170,30 @@ export interface Invoice {
   status: InvoiceStatus
   paid_at?: string
 }
+
+export interface Appointment {
+  id: UUID
+  patient_id: UUID
+  doctor_id: UUID
+  slot_time: string
+  status: AppointmentStatus
+  type: 'walkin' | 'pre_booked'
+  notes?: string
+  booked_by_user_id?: UUID
+  created_at: string
+  patient_name?: string
+  doctor_name?: string
+}
+
+export interface AppointmentSlot {
+  slot_time: string
+  is_available: boolean
+}
+
+export interface CheckInResult {
+  appointment_id: UUID
+  visit_id: UUID
+  token_id: UUID
+  token_no: number
+  queue_type: string
+}

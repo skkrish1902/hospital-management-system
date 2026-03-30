@@ -9,14 +9,14 @@ import NurseVitalsPage from '@/features/nurse/NurseVitalsPage'
 import ConsultationPage from '@/features/doctor/ConsultationPage'
 import PrescriptionPage from '@/features/doctor/PrescriptionPage'
 import BillingPage from '@/features/billing/BillingPage'
+import DoctorsAdminPage from '@/features/admin/DoctorsAdminPage'
+import AppointmentsPage from '@/features/appointments/AppointmentsPage'
 
 // Remaining placeholder pages
 const Dashboard = () => <div className="p-6"><h1 className="text-2xl font-semibold">Command Center</h1></div>
-const AppointmentsPage = () => <div className="p-6"><h1 className="text-2xl font-semibold">Appointments</h1></div>
 const RosterPage = () => <div className="p-6"><h1 className="text-2xl font-semibold">Nurse Roster</h1></div>
 const LabPage = () => <div className="p-6"><h1 className="text-2xl font-semibold">Lab Orders</h1></div>
 const PharmacyPage = () => <div className="p-6"><h1 className="text-2xl font-semibold">Pharmacy Queue</h1></div>
-const DoctorsAdminPage = () => <div className="p-6"><h1 className="text-2xl font-semibold">Doctors & Departments</h1></div>
 
 export default function App() {
   return (
