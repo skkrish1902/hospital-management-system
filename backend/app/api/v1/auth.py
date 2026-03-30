@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.engine import get_session
@@ -12,16 +12,19 @@ router = APIRouter()
 
 @router.post("/login", response_model=TokenResponse)
 async def login(payload: LoginRequest, session: AsyncSession = Depends(get_session)):
-    # Always query public schema for auth
+    # Login accepts either email or username
     result = await session.execute(
-        select(User).where(User.email == payload.email, User.is_active == True)  # noqa: E712
+        select(User).where(
+            or_(User.email == payload.login_id, User.username == payload.login_id),
+            User.is_active == True,  # noqa: E712
+        )
     )
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
+            detail="Invalid email/username or password",
         )
 
     # Fetch tenant schema

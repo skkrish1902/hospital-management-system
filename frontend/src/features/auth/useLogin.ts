@@ -4,7 +4,7 @@ import { useAuthStore } from './authStore'
 import apiClient from '@/services/apiClient'
 
 interface LoginPayload {
-  email: string
+  login_id: string   // email OR username
   password: string
 }
 

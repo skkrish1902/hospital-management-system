@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_role
 from app.core.security import hash_password
+from app.core.username import generate_username
 from app.db.engine import get_session
 from app.models.public.user import Tenant, User
 from app.models.tenant.department import Department
@@ -20,11 +21,15 @@ router = APIRouter()
 
 
 async def _enrich(doctor: Doctor, session: AsyncSession) -> DoctorRead:
-    """Attach department_name to a DoctorRead."""
+    """Attach department_name and username to a DoctorRead."""
     read = DoctorRead.model_validate(doctor)
     if doctor.department_id:
         dept = await session.get(Department, doctor.department_id)
         read.department_name = dept.name if dept else None
+    # Fetch username from linked user account
+    user = await session.get(User, doctor.user_id)
+    if user:
+        read.username = user.username
     return read
 
 
@@ -82,11 +87,22 @@ async def onboard_doctor(
     if existing:
         raise HTTPException(status_code=409, detail="A user with this email already exists")
 
+    # Resolve username
+    username = payload.username or await generate_username(payload.full_name, session)
+    # Ensure username uniqueness if caller supplied one manually
+    if payload.username:
+        username_taken = (await session.execute(
+            select(User).where(User.username == username)
+        )).scalar_one_or_none()
+        if username_taken:
+            raise HTTPException(status_code=409, detail=f"Username '{username}' is already taken")
+
     # Create user account with doctor role
     new_user = User(
         id=uuid.uuid4(),
         tenant_id=tenant.id,
         email=payload.email,
+        username=username,
         hashed_password=hash_password(payload.password),
         full_name=payload.full_name,
         role="doctor",

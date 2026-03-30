@@ -28,9 +28,30 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 async def init_db() -> None:
-    """Called at application startup to verify DB connectivity."""
+    """Called at application startup; applies lightweight schema migrations."""
+    from sqlalchemy import text
     async with engine.begin() as conn:
-        await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
+        await conn.execute(text("SELECT 1"))
+        # Add username column if it doesn't exist yet (idempotent migration)
+        await conn.execute(text("""
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name   = 'users'
+                      AND column_name  = 'username'
+                ) THEN
+                    ALTER TABLE public.users ADD COLUMN username VARCHAR(50);
+                    -- Back-fill existing rows with a unique placeholder derived from email
+                    UPDATE public.users
+                       SET username = LOWER(SPLIT_PART(email, '@', 1))
+                                   || LPAD(CAST(EXTRACT(EPOCH FROM NOW())::BIGINT % 10000 AS TEXT), 4, '0')
+                     WHERE username IS NULL;
+                    ALTER TABLE public.users ALTER COLUMN username SET NOT NULL;
+                    CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON public.users (username);
+                END IF;
+            END $$;
+        """))
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

@@ -26,6 +26,7 @@ TENANT_DATA = {
 
 ADMIN_USER = {
     "email": "admin@shankar-hospital.in",
+    "username": "hospitaladmin",
     "full_name": "Hospital Admin",
     "role": "hospital_admin",
     "password": "ChangeMe@123",  # must be changed on first login
@@ -33,6 +34,7 @@ ADMIN_USER = {
 
 SUPER_ADMIN_USER = {
     "email": "superadmin@smarthosp.in",
+    "username": "superadmin",
     "full_name": "Platform Super Admin",
     "role": "super_admin",
     "password": "SuperAdmin@123",
@@ -62,6 +64,7 @@ async def seed():
             id=uuid.uuid4(),
             tenant_id=tenant.id,
             email=ADMIN_USER["email"],
+            username=ADMIN_USER["username"],
             hashed_password=hash_password(ADMIN_USER["password"]),
             full_name=ADMIN_USER["full_name"],
             role=ADMIN_USER["role"],
@@ -73,6 +76,7 @@ async def seed():
             id=uuid.uuid4(),
             tenant_id=tenant.id,
             email=SUPER_ADMIN_USER["email"],
+            username=SUPER_ADMIN_USER["username"],
             hashed_password=hash_password(SUPER_ADMIN_USER["password"]),
             full_name=SUPER_ADMIN_USER["full_name"],
             role=SUPER_ADMIN_USER["role"],
@@ -82,8 +86,8 @@ async def seed():
         await session.commit()
         print("✅ Seed complete.")
         print(f"   Tenant:      {TENANT_DATA['hospital_name']} (schema: {SHANKAR_SCHEMA})")
-        print(f"   Admin:       {ADMIN_USER['email']} / {ADMIN_USER['password']}")
-        print(f"   SuperAdmin:  {SUPER_ADMIN_USER['email']} / {SUPER_ADMIN_USER['password']}")
+        print(f"   Admin:       {ADMIN_USER['email']} / {ADMIN_USER['password']}  (username: {ADMIN_USER['username']})")
+        print(f"   SuperAdmin:  {SUPER_ADMIN_USER['email']} / {SUPER_ADMIN_USER['password']}  (username: {SUPER_ADMIN_USER['username']})") 
         print("   ⚠️  Change default passwords immediately after first login.")
 
 

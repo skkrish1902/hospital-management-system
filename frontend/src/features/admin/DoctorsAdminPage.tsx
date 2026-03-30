@@ -21,6 +21,12 @@ type DeptForm = z.infer<typeof deptSchema>
 // Used for the Create (onboard) form — includes login credentials
 const doctorOnboardSchema = z.object({
   email: z.string().email('Valid email required'),
+  username: z.string()
+    .min(3, 'Min 3 characters')
+    .max(50)
+    .regex(/^[a-z0-9_]+$/, 'Lowercase letters, digits, underscores only')
+    .optional()
+    .or(z.literal('')),
   password: z.string().min(8, 'Minimum 8 characters'),
   full_name: z.string().min(1, 'Name required'),
   specialization: z.string().min(1, 'Specialization required'),
@@ -254,6 +260,9 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
   const [showCreate, setShowCreate] = useState(false)
   const [editing, setEditing] = useState<Doctor | null>(null)
   const [showInactive, setShowInactive] = useState(false)
+  const [createdCreds, setCreatedCreds] = useState<{
+    username: string; email: string; password: string; full_name: string
+  } | null>(null)
 
   const { data: doctors = [], isLoading } = useQuery({
     queryKey: ['doctors-admin', showInactive],
@@ -262,7 +271,16 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
 
   const onboardMut = useMutation({
     mutationFn: doctorService.onboard,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['doctors-admin'] }); setShowCreate(false) },
+    onSuccess: (doctor, vars) => {
+      qc.invalidateQueries({ queryKey: ['doctors-admin'] })
+      setShowCreate(false)
+      setCreatedCreds({
+        username: doctor.username ?? vars.full_name,
+        email: vars.email,
+        password: vars.password,
+        full_name: vars.full_name,
+      })
+    },
   })
   const updateMut = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Parameters<typeof doctorService.update>[1] }) =>
@@ -415,10 +433,25 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
                 <FormField label="Email" error={createForm.formState.errors.email?.message}>
                   <input {...createForm.register('email')} type="email" className={inputCls} placeholder="doctor@hospital.in" />
                 </FormField>
-                <FormField label="Password" error={createForm.formState.errors.password?.message}>
-                  <input {...createForm.register('password')} type="password" className={inputCls} placeholder="Min 8 characters" />
+                <FormField
+                  label="Username (auto-generated if blank)"
+                  error={createForm.formState.errors.username?.message}
+                >
+                  <input
+                    {...createForm.register('username')}
+                    className={inputCls}
+                    placeholder="e.g. skredd03"
+                    onChange={e => {
+                      // Force lowercase as user types
+                      e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '')
+                      createForm.register('username').onChange(e)
+                    }}
+                  />
                 </FormField>
               </div>
+              <FormField label="Password" error={createForm.formState.errors.password?.message}>
+                <input {...createForm.register('password')} type="password" className={inputCls} placeholder="Min 8 characters" />
+              </FormField>
             </div>
             <DoctorProfileFields form={createForm} />
             {onboardMut.isError && (
@@ -467,6 +500,42 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
               </button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {/* Credentials reveal modal — shown after a doctor is created */}
+      {createdCreds && (
+        <Modal title="✅ Doctor Created — Save These Credentials" onClose={() => setCreatedCreds(null)}>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Share the following login details with <strong>{createdCreds.full_name}</strong>.
+              They will not be shown again.
+            </p>
+            <div className="bg-gray-50 border border-gray-200 rounded-lg divide-y divide-gray-200 text-sm">
+              {(([
+                ['Full Name', createdCreds.full_name],
+                ['Username', createdCreds.username],
+                ['Email', createdCreds.email],
+                ['Password', createdCreds.password],
+              ]) as [string, string][]).map(([label, value]) => (
+                <div key={label} className="flex items-center px-4 py-2.5 gap-4">
+                  <span className="w-24 text-gray-500 flex-shrink-0">{label}</span>
+                  <span className="font-mono font-medium text-gray-900 select-all">{value}</span>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-amber-600">
+              ⚠️ Ask the doctor to change their password on first login.
+            </p>
+            <div className="flex justify-end pt-1">
+              <button
+                onClick={() => setCreatedCreds(null)}
+                className="px-5 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary/90"
+              >
+                Done
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
     </div>

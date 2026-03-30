@@ -27,6 +27,7 @@ class DoctorUpdate(BaseModel):
 class DoctorRead(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
+    username: Optional[str] = None  # from linked user account
     full_name: str
     specialization: str
     department_id: Optional[uuid.UUID] = None
@@ -44,6 +45,13 @@ class DoctorOnboard(BaseModel):
     # Login account fields
     email: EmailStr
     password: str = Field(..., min_length=8, description="Min 8 characters")
+    username: Optional[str] = Field(
+        None,
+        min_length=3,
+        max_length=50,
+        pattern=r"^[a-z0-9_]+$",
+        description="Lowercase letters, digits, underscores only. Auto-generated if omitted.",
+    )
     # Doctor profile fields (full_name used for both account and profile)
     full_name: str = Field(..., min_length=1, max_length=255)
     specialization: str = Field(..., min_length=1, max_length=255)

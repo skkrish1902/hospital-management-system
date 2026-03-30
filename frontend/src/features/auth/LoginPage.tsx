@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { useLogin } from './useLogin'
 
 const schema = z.object({
-  email: z.string().email('Enter a valid email'),
+  login_id: z.string().min(1, 'Enter your email or username'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
 })
 
@@ -39,20 +39,20 @@ export default function LoginPage() {
         {/* Card */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-5" noValidate>
-            {/* Email */}
+            {/* Email or Username */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                Email address
+                Email or Username
               </label>
               <input
-                {...register('email')}
-                type="email"
-                autoComplete="email"
+                {...register('login_id')}
+                type="text"
+                autoComplete="username"
                 className="w-full px-3.5 py-2.5 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition"
-                placeholder="you@hospital.in"
+                placeholder="you@hospital.in or mkrish66"
               />
-              {errors.email && (
-                <p className="mt-1 text-xs text-red-600">{errors.email.message}</p>
+              {errors.login_id && (
+                <p className="mt-1 text-xs text-red-600">{errors.login_id.message}</p>
               )}
             </div>
 
@@ -76,7 +76,7 @@ export default function LoginPage() {
             {/* Server error */}
             {error && (
               <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-                Invalid email or password. Please try again.
+                Invalid email/username or password. Please try again.
               </div>
             )}
 
