@@ -63,6 +63,7 @@ async def seed():
         admin = User(
             id=uuid.uuid4(),
             tenant_id=tenant.id,
+            tenant_name=SHANKAR_SCHEMA,
             email=ADMIN_USER["email"],
             username=ADMIN_USER["username"],
             hashed_password=hash_password(ADMIN_USER["password"]),
@@ -75,6 +76,7 @@ async def seed():
         super_admin = User(
             id=uuid.uuid4(),
             tenant_id=tenant.id,
+            tenant_name=SHANKAR_SCHEMA,
             email=SUPER_ADMIN_USER["email"],
             username=SUPER_ADMIN_USER["username"],
             hashed_password=hash_password(SUPER_ADMIN_USER["password"]),

@@ -46,6 +46,7 @@ async def create_tenant(
     admin_user = User(
         id=uuid.uuid4(),
         tenant_id=tenant.id,
+        tenant_name=schema,
         email=payload.admin_email,
         hashed_password=hash_password(payload.admin_password),
         full_name=payload.admin_full_name,

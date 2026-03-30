@@ -52,6 +52,25 @@ async def init_db() -> None:
                 END IF;
             END $$;
         """))
+        # Add tenant_name column if it doesn't exist yet (idempotent migration)
+        await conn.execute(text("""
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name   = 'users'
+                      AND column_name  = 'tenant_name'
+                ) THEN
+                    ALTER TABLE public.users ADD COLUMN tenant_name VARCHAR(63);
+                    -- Back-fill from the tenants table
+                    UPDATE public.users u
+                       SET tenant_name = t.schema_name
+                      FROM public.tenants t
+                     WHERE t.id = u.tenant_id;
+                    ALTER TABLE public.users ALTER COLUMN tenant_name SET NOT NULL;
+                END IF;
+            END $$;
+        """))
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

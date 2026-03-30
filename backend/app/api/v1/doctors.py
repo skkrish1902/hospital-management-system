@@ -117,6 +117,7 @@ async def onboard_doctor(
         new_user = User(
             id=uuid.uuid4(),
             tenant_id=tenant.id,
+            tenant_name=tenant_schema,
             email=payload.email,
             username=username,
             hashed_password=hash_password(payload.password),

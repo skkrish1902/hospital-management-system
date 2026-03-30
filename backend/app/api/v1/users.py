@@ -35,7 +35,7 @@ async def list_users(
         return []
 
     stmt = (
-        select(User.id, User.full_name, User.email, User.username, User.role)
+        select(User.id, User.full_name, User.email, User.username, User.role, User.tenant_name)
         .where(User.tenant_id == tenant.id, User.is_active == True)  # noqa: E712
         .order_by(User.full_name)
     )
@@ -44,6 +44,6 @@ async def list_users(
 
     rows = (await session.execute(stmt)).all()
     return [
-        {"id": str(r.id), "full_name": r.full_name, "email": r.email, "username": r.username, "role": r.role}
+        {"id": str(r.id), "full_name": r.full_name, "email": r.email, "username": r.username, "role": r.role, "tenant_name": r.tenant_name}
         for r in rows
     ]
