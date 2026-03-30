@@ -80,35 +80,51 @@ async def onboard_doctor(
     if not tenant:
         raise HTTPException(status_code=400, detail="Tenant not found")
 
-    # Check email uniqueness
-    existing = (await session.execute(
+    # Check if a user with this email already exists
+    existing_user = (await session.execute(
         select(User).where(User.email == payload.email)
     )).scalar_one_or_none()
-    if existing:
-        raise HTTPException(status_code=409, detail="A user with this email already exists")
 
-    # Resolve username
-    username = payload.username or await generate_username(payload.full_name, session)
-    # Ensure username uniqueness if caller supplied one manually
-    if payload.username:
-        username_taken = (await session.execute(
-            select(User).where(User.username == username)
+    if existing_user:
+        # Idempotency: if the user exists but has no doctor profile (partial insert
+        # from a previous failed attempt), create just the doctor profile.
+        existing_doctor = (await session.execute(
+            select(Doctor).where(Doctor.user_id == existing_user.id)
         )).scalar_one_or_none()
-        if username_taken:
-            raise HTTPException(status_code=409, detail=f"Username '{username}' is already taken")
+        if existing_doctor:
+            raise HTTPException(
+                status_code=409,
+                detail="A doctor profile already exists for this email"
+            )
+        # Resume: attach the doctor profile to the existing user account.
+        # Update the password with whatever the admin typed so the credentials
+        # shown in the UI modal are valid.
+        existing_user.hashed_password = hash_password(payload.password)
+        new_user = existing_user
+        username = existing_user.username
+    else:
+        # Resolve username
+        username = payload.username or await generate_username(payload.full_name, session)
+        # Ensure username uniqueness if caller supplied one manually
+        if payload.username:
+            username_taken = (await session.execute(
+                select(User).where(User.username == username)
+            )).scalar_one_or_none()
+            if username_taken:
+                raise HTTPException(status_code=409, detail=f"Username '{username}' is already taken")
 
-    # Create user account with doctor role
-    new_user = User(
-        id=uuid.uuid4(),
-        tenant_id=tenant.id,
-        email=payload.email,
-        username=username,
-        hashed_password=hash_password(payload.password),
-        full_name=payload.full_name,
-        role="doctor",
-    )
-    session.add(new_user)
-    await session.flush()  # get new_user.id
+        # Create user account with doctor role
+        new_user = User(
+            id=uuid.uuid4(),
+            tenant_id=tenant.id,
+            email=payload.email,
+            username=username,
+            hashed_password=hash_password(payload.password),
+            full_name=payload.full_name,
+            role="doctor",
+        )
+        session.add(new_user)
+        await session.flush()  # get new_user.id
 
     # Create doctor profile
     doctor = Doctor(
