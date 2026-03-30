@@ -10,6 +10,7 @@ from app.api.v1.patients import router as patients_router
 from app.api.v1.prescriptions import router as prescriptions_router
 from app.api.v1.queue import router as queue_router
 from app.api.v1.tenants import router as tenants_router
+from app.api.v1.users import router as users_router
 from app.api.v1.visits import router as visits_router
 from app.api.v1.vitals import router as vitals_router
 
@@ -17,6 +18,7 @@ api_router = APIRouter()
 
 api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
 api_router.include_router(tenants_router, prefix="/tenants", tags=["tenants"])
+api_router.include_router(users_router, prefix="/users", tags=["users"])
 api_router.include_router(patients_router, prefix="/patients", tags=["patients"])
 api_router.include_router(departments_router, prefix="/departments", tags=["departments"])
 api_router.include_router(doctors_router, prefix="/doctors", tags=["doctors"])

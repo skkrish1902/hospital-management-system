@@ -8,7 +8,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import type { Department, Doctor } from '@/types/common'
-import { departmentService, doctorService } from '@/services/clinicalService'
+import { departmentService, doctorService, userService } from '@/services/clinicalService'
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -276,10 +276,27 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
   const deptMap: Record<string, string> = {}
   departments.forEach(d => { deptMap[d.id] = d.name })
 
+  const { data: doctorUsers = [] } = useQuery({
+    queryKey: ['users', 'doctor'],
+    queryFn: () => userService.list('doctor'),
+  })
+
   const DoctorFormFields = ({ form }: { form: ReturnType<typeof useForm<DoctorForm>> }) => (
     <div className="space-y-4">
-      <FormField label="User ID (UUID)" error={form.formState.errors.user_id?.message}>
-        <input {...form.register('user_id')} className={inputCls} placeholder="UUID from users table" />
+      <FormField label="User Account" error={form.formState.errors.user_id?.message}>
+        <select {...form.register('user_id')} className={inputCls}>
+          <option value="">— Select a user with doctor role —</option>
+          {doctorUsers.map(u => (
+            <option key={u.id} value={u.id}>
+              {u.full_name} ({u.email})
+            </option>
+          ))}
+        </select>
+        {doctorUsers.length === 0 && (
+          <p className="text-xs text-amber-600 mt-1">
+            No users with the &ldquo;doctor&rdquo; role found. Create one in the users table first.
+          </p>
+        )}
       </FormField>
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Full Name" error={form.formState.errors.full_name?.message}>

@@ -73,6 +73,17 @@ export const doctorService = {
   }>) => apiClient.patch<Doctor>(`/doctors/${id}`, data).then(r => r.data),
 }
 
+export const userService = {
+  /** List users in the current tenant, optionally filtered by role. */
+  list: (role?: string) =>
+    apiClient
+      .get<{ id: string; full_name: string; email: string; role: string }[]>(
+        '/users',
+        role ? { params: { role } } : undefined,
+      )
+      .then(r => r.data),
+}
+
 export const departmentService = {
   list: (include_inactive = false) =>
     apiClient.get<Department[]>('/departments', { params: { include_inactive } }).then(r => r.data),
