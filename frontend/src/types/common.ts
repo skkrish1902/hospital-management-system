@@ -64,6 +64,7 @@ export interface Doctor {
   id: UUID
   user_id: UUID
   username?: string
+  phone?: string
   full_name: string
   specialization: string
   department_id?: UUID

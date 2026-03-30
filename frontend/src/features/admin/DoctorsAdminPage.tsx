@@ -21,6 +21,10 @@ type DeptForm = z.infer<typeof deptSchema>
 // Used for the Create (onboard) form — includes login credentials
 const doctorOnboardSchema = z.object({
   email: z.string().email('Valid email required'),
+  phone: z.string()
+    .regex(/^\+?[1-9]\d{9,14}$/, 'Enter a valid phone (e.g. +91XXXXXXXXXX)')
+    .optional()
+    .or(z.literal('')),
   username: z.string()
     .min(3, 'Min 3 characters')
     .max(50)
@@ -261,7 +265,7 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
   const [editing, setEditing] = useState<Doctor | null>(null)
   const [showInactive, setShowInactive] = useState(false)
   const [createdCreds, setCreatedCreds] = useState<{
-    username: string; email: string; password: string; full_name: string
+    username: string; email: string; phone?: string; password: string; full_name: string
   } | null>(null)
 
   const { data: doctors = [], isLoading } = useQuery({
@@ -277,6 +281,7 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
       setCreatedCreds({
         username: doctor.username ?? vars.full_name,
         email: vars.email,
+        phone: vars.phone,
         password: vars.password,
         full_name: vars.full_name,
       })
@@ -421,6 +426,7 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
             onSubmit={createForm.handleSubmit(data =>
               onboardMut.mutate({
                 ...data,
+                phone: data.phone || undefined,
                 username: data.username || undefined,
                 department_id: data.department_id || undefined,
                 experience_years: data.experience_years || undefined,
@@ -436,6 +442,11 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
                 <FormField label="Email" error={createForm.formState.errors.email?.message}>
                   <input {...createForm.register('email')} type="email" className={inputCls} placeholder="doctor@hospital.in" />
                 </FormField>
+                <FormField label="Phone (for SMS/WhatsApp)" error={createForm.formState.errors.phone?.message}>
+                  <input {...createForm.register('phone')} type="tel" className={inputCls} placeholder="+91XXXXXXXXXX" />
+                </FormField>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
                 <FormField
                   label="Username (auto-generated if blank)"
                   error={createForm.formState.errors.username?.message}
@@ -451,10 +462,10 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
                     }}
                   />
                 </FormField>
+                <FormField label="Password" error={createForm.formState.errors.password?.message}>
+                  <input {...createForm.register('password')} type="password" className={inputCls} placeholder="Min 8 characters" />
+                </FormField>
               </div>
-              <FormField label="Password" error={createForm.formState.errors.password?.message}>
-                <input {...createForm.register('password')} type="password" className={inputCls} placeholder="Min 8 characters" />
-              </FormField>
             </div>
             <DoctorProfileFields form={createForm} />
             {onboardMut.isError && (
@@ -515,12 +526,13 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
               They will not be shown again.
             </p>
             <div className="bg-gray-50 border border-gray-200 rounded-lg divide-y divide-gray-200 text-sm">
-              {(([
+              {([
                 ['Full Name', createdCreds.full_name],
                 ['Username', createdCreds.username],
                 ['Email', createdCreds.email],
+                ...(createdCreds.phone ? [['Phone', createdCreds.phone]] : []),
                 ['Password', createdCreds.password],
-              ]) as [string, string][]).map(([label, value]) => (
+              ] as [string, string][]).map(([label, value]) => (
                 <div key={label} className="flex items-center px-4 py-2.5 gap-4">
                   <span className="w-24 text-gray-500 flex-shrink-0">{label}</span>
                   <span className="font-mono font-medium text-gray-900 select-all">{value}</span>

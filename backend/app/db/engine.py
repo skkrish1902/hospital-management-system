@@ -68,6 +68,19 @@ async def init_db() -> None:
                 END IF;
             END $$;
         """))
+        # Add phone column if it doesn't exist yet (idempotent migration)
+        await conn.execute(text("""
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name   = 'users'
+                      AND column_name  = 'phone'
+                ) THEN
+                    ALTER TABLE public.users ADD COLUMN phone VARCHAR(20);
+                END IF;
+            END $$;
+        """))
         # Add tenant_name column if it doesn't exist yet (idempotent migration)
         await conn.execute(text("""
             DO $$ BEGIN

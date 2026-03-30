@@ -30,6 +30,7 @@ async def _enrich(doctor: Doctor, session: AsyncSession) -> DoctorRead:
     user = await session.get(User, doctor.user_id)
     if user:
         read.username = user.username
+        read.phone = user.phone
     return read
 
 
@@ -120,6 +121,7 @@ async def onboard_doctor(
             tenant_name=tenant_schema,
             email=payload.email,
             username=username,
+            phone=payload.phone,
             hashed_password=hash_password(payload.password),
             full_name=payload.full_name,
             role="doctor",

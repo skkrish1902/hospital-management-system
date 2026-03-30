@@ -28,6 +28,7 @@ class DoctorRead(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
     username: Optional[str] = None  # from linked user account
+    phone: Optional[str] = None      # from linked user account
     full_name: str
     specialization: str
     department_id: Optional[uuid.UUID] = None
@@ -44,6 +45,11 @@ class DoctorOnboard(BaseModel):
     """Creates a new login account (role=doctor) + doctor profile in one step."""
     # Login account fields
     email: EmailStr
+    phone: Optional[str] = Field(
+        None,
+        pattern=r"^\+?[1-9]\d{9,14}$",
+        description="Digits only, optional leading +. E.g. +919876543210",
+    )
     password: str = Field(..., min_length=8, description="Min 8 characters")
     username: Optional[str] = Field(
         None,
@@ -60,10 +66,10 @@ class DoctorOnboard(BaseModel):
     qualification: Optional[str] = Field(None, max_length=500)
     experience_years: Optional[int] = Field(None, ge=0, le=60)
 
-    @field_validator("username", mode="before")
+    @field_validator("username", "phone", mode="before")
     @classmethod
     def empty_str_to_none(cls, v: object) -> object:
-        """Treat an empty string as 'not provided' so auto-generation kicks in."""
+        """Treat an empty string as 'not provided'."""
         if isinstance(v, str) and v.strip() == "":
             return None
         return v
