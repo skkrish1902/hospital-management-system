@@ -421,7 +421,10 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
             onSubmit={createForm.handleSubmit(data =>
               onboardMut.mutate({
                 ...data,
+                username: data.username || undefined,
                 department_id: data.department_id || undefined,
+                experience_years: data.experience_years || undefined,
+                qualification: data.qualification || undefined,
               })
             )}
             className="space-y-4"
