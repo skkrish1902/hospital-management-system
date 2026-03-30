@@ -65,7 +65,7 @@ export const doctorService = {
   /** Creates login account (role=doctor) + doctor profile in one step. */
   onboard: (data: {
     email: string
-    phone?: string
+    phone: string
     username?: string
     password: string
     full_name: string

@@ -22,9 +22,8 @@ type DeptForm = z.infer<typeof deptSchema>
 const doctorOnboardSchema = z.object({
   email: z.string().email('Valid email required'),
   phone: z.string()
-    .regex(/^\+?[1-9]\d{9,14}$/, 'Enter a valid phone (e.g. +91XXXXXXXXXX)')
-    .optional()
-    .or(z.literal('')),
+    .min(1, 'Phone number required')
+    .regex(/^\+?[1-9]\d{9,14}$/, 'Enter a valid phone number (e.g. +91XXXXXXXXXX)'),
   username: z.string()
     .min(3, 'Min 3 characters')
     .max(50)
@@ -265,7 +264,7 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
   const [editing, setEditing] = useState<Doctor | null>(null)
   const [showInactive, setShowInactive] = useState(false)
   const [createdCreds, setCreatedCreds] = useState<{
-    username: string; email: string; phone?: string; password: string; full_name: string
+    username: string; email: string; phone: string; password: string; full_name: string
   } | null>(null)
 
   const { data: doctors = [], isLoading } = useQuery({
@@ -426,11 +425,10 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
             onSubmit={createForm.handleSubmit(data =>
               onboardMut.mutate({
                 ...data,
-                phone: data.phone || undefined,
-                username: data.username || undefined,
                 department_id: data.department_id || undefined,
                 experience_years: data.experience_years || undefined,
                 qualification: data.qualification || undefined,
+                username: data.username || undefined,
               })
             )}
             className="space-y-4"
@@ -442,7 +440,7 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
                 <FormField label="Email" error={createForm.formState.errors.email?.message}>
                   <input {...createForm.register('email')} type="email" className={inputCls} placeholder="doctor@hospital.in" />
                 </FormField>
-                <FormField label="Phone (for SMS/WhatsApp)" error={createForm.formState.errors.phone?.message}>
+                <FormField label="Phone" error={createForm.formState.errors.phone?.message}>
                   <input {...createForm.register('phone')} type="tel" className={inputCls} placeholder="+91XXXXXXXXXX" />
                 </FormField>
               </div>
@@ -522,15 +520,15 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
         <Modal title="✅ Doctor Created — Save These Credentials" onClose={() => setCreatedCreds(null)}>
           <div className="space-y-4">
             <p className="text-sm text-gray-600">
-              Share the following login details with <strong>{createdCreds.full_name}</strong>.
-              They will not be shown again.
+              Credentials for <strong>{createdCreds.full_name}</strong> have been sent via SMS to <strong>{createdCreds.phone}</strong>.
+              A copy is shown below for your records.
             </p>
             <div className="bg-gray-50 border border-gray-200 rounded-lg divide-y divide-gray-200 text-sm">
               {([
                 ['Full Name', createdCreds.full_name],
                 ['Username', createdCreds.username],
                 ['Email', createdCreds.email],
-                ...(createdCreds.phone ? [['Phone', createdCreds.phone]] : []),
+                ['Phone', createdCreds.phone],
                 ['Password', createdCreds.password],
               ] as [string, string][]).map(([label, value]) => (
                 <div key={label} className="flex items-center px-4 py-2.5 gap-4">

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_role
 from app.core.security import hash_password
+from app.core.sms import send_doctor_credentials
 from app.core.username import generate_username
 from app.db.engine import get_session
 from app.models.public.user import Tenant, User
@@ -143,7 +144,17 @@ async def onboard_doctor(
     session.add(doctor)
     await session.commit()
     await session.refresh(doctor)
-    return await _enrich(doctor, session)
+    enriched = await _enrich(doctor, session)
+
+    # Send credentials via SMS — non-blocking (errors are logged, never raised)
+    send_doctor_credentials(
+        to_phone=new_user.phone,
+        full_name=new_user.full_name,
+        username=new_user.username,
+        password=payload.password,
+    )
+
+    return enriched
 
 
 @router.get("/{doctor_id}", response_model=DoctorRead)

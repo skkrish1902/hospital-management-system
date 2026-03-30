@@ -45,10 +45,10 @@ class DoctorOnboard(BaseModel):
     """Creates a new login account (role=doctor) + doctor profile in one step."""
     # Login account fields
     email: EmailStr
-    phone: Optional[str] = Field(
-        None,
+    phone: str = Field(
+        ...,
         pattern=r"^\+?[1-9]\d{9,14}$",
-        description="Digits only, optional leading +. E.g. +919876543210",
+        description="Required. E.164 format recommended, e.g. +919876543210",
     )
     password: str = Field(..., min_length=8, description="Min 8 characters")
     username: Optional[str] = Field(
@@ -66,10 +66,10 @@ class DoctorOnboard(BaseModel):
     qualification: Optional[str] = Field(None, max_length=500)
     experience_years: Optional[int] = Field(None, ge=0, le=60)
 
-    @field_validator("username", "phone", mode="before")
+    @field_validator("username", mode="before")
     @classmethod
     def empty_str_to_none(cls, v: object) -> object:
-        """Treat an empty string as 'not provided'."""
+        """Treat an empty username string as 'not provided' so auto-generation kicks in."""
         if isinstance(v, str) and v.strip() == "":
             return None
         return v
