@@ -1,0 +1,35 @@
+import uuid
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel
+
+
+class MedicineItem(BaseModel):
+    name: str
+    dose: str
+    frequency: str   # OD | BD | TID | QID | SOS | etc.
+    duration: str    # "5 days", "1 week"
+    route: str = "oral"
+    notes: Optional[str] = None
+
+
+class PrescriptionCreate(BaseModel):
+    visit_id: uuid.UUID
+    medicines: Optional[List[MedicineItem]] = None
+    instructions: Optional[str] = None
+
+
+class PrescriptionUpdate(BaseModel):
+    medicines: Optional[List[MedicineItem]] = None
+    instructions: Optional[str] = None
+
+
+class PrescriptionRead(BaseModel):
+    id: uuid.UUID
+    visit_id: uuid.UUID
+    medicines: Optional[List[Dict[str, Any]]] = None
+    instructions: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

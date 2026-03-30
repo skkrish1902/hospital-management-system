@@ -91,6 +91,8 @@ export interface QueueToken {
   called_at?: string
   completed_at?: string
   patient?: Patient
+  patient_name?: string
+  patient_phone?: string
 }
 
 export interface Visit {
@@ -103,6 +105,8 @@ export interface Visit {
   closed_at?: string
   patient?: Patient
   doctor?: Doctor
+  patient_name?: string
+  doctor_name?: string
 }
 
 export interface Vitals {
@@ -125,6 +129,18 @@ export interface MedicineItem {
   duration: string
   route: string
   instructions?: string
+}
+
+export interface Consultation {
+  id: UUID
+  visit_id: UUID
+  chief_complaint?: string
+  history?: string
+  examination?: string
+  diagnosis_icd10?: { code: string; description: string }[]
+  notes?: string
+  follow_up_date?: string
+  created_at: string
 }
 
 export interface Prescription {
