@@ -6,7 +6,7 @@
  *   Left: list of today's appointments with status badges + check-in / cancel actions
  *   Right: slot availability grid for selected doctor
  */
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -14,6 +14,7 @@ import { z } from 'zod'
 import { format, addDays, subDays, parseISO } from 'date-fns'
 import { appointmentService, doctorService } from '@/services/clinicalService'
 import { patientService } from '@/services/patientService'
+import { useWebSocket } from '@/hooks/useWebSocket'
 import type { Appointment, AppointmentSlot, Doctor, Patient } from '@/types/common'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -286,6 +287,12 @@ export default function AppointmentsPage() {
       doctor_id: filterDoctorId || undefined,
     }),
   })
+
+  // Real-time: refresh when any appointment or queue event fires
+  const invalidateAppts = useCallback(() =>
+    qc.invalidateQueries({ queryKey: ['appointments'] }), [qc])
+  useWebSocket('appointment:update', invalidateAppts)
+  useWebSocket('queue:update', invalidateAppts)
 
   const cancelMut = useMutation({
     mutationFn: appointmentService.cancel,

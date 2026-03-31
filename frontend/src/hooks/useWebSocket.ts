@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef } from 'react'
 import { useAuthStore } from '@/features/auth/authStore'
 
 type MessageHandler = (data: unknown) => void
@@ -6,57 +6,109 @@ type MessageHandler = (data: unknown) => void
 const RECONNECT_DELAY_MS = 3000
 const MAX_RECONNECT_ATTEMPTS = 10
 
+// ── Shared singleton per channel key ─────────────────────────────────────────
+// Key: `${tenantSchema}/${channel}`
+// Multiple components subscribing to the same channel share ONE WebSocket.
+
+interface ChannelState {
+  ws: WebSocket | null
+  handlers: Set<MessageHandler>
+  attempts: number
+  reconnectTimer: ReturnType<typeof setTimeout> | null
+  url: string
+}
+
+const registry = new Map<string, ChannelState>()
+
+function getOrCreate(key: string, url: string): ChannelState {
+  if (!registry.has(key)) {
+    registry.set(key, {
+      ws: null,
+      handlers: new Set(),
+      attempts: 0,
+      reconnectTimer: null,
+      url,
+    })
+  }
+  return registry.get(key)!
+}
+
+function openConnection(key: string) {
+  const state = registry.get(key)
+  if (!state) return
+  if (state.ws && state.ws.readyState <= WebSocket.OPEN) return // already open/connecting
+
+  const ws = new WebSocket(state.url)
+  state.ws = ws
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data as string)
+      state.handlers.forEach(h => h(data))
+    } catch {
+      // ignore malformed messages
+    }
+  }
+
+  ws.onclose = (event) => {
+    state.ws = null
+    if (event.wasClean) return // intentional close
+    if (state.handlers.size === 0) return // no one listening
+    if (state.attempts >= MAX_RECONNECT_ATTEMPTS) return
+    state.attempts += 1
+    state.reconnectTimer = setTimeout(() => openConnection(key), RECONNECT_DELAY_MS)
+  }
+
+  ws.onerror = () => ws.close()
+}
+
+function closeIfIdle(key: string) {
+  const state = registry.get(key)
+  if (!state) return
+  if (state.handlers.size > 0) return // still has subscribers
+  if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null }
+  state.ws?.close(1000, 'No subscribers')
+  state.ws = null
+  registry.delete(key)
+}
+
+// ── Hook ──────────────────────────────────────────────────────────────────────
+
 /**
  * useWebSocket
  *
- * Connects to /ws/{tenantSchema}/{channel}?token=<jwt>
- * Automatically reconnects with a fixed delay on unexpected close.
+ * Connects to /ws/{tenantSchema}/{channel}?token=<jwt>.
+ * All components subscribing to the same channel share a single WebSocket.
+ * Auto-reconnects with a fixed delay on unexpected close.
  */
 export function useWebSocket(channel: string, onMessage: MessageHandler) {
   const { accessToken, user } = useAuthStore()
-  const wsRef = useRef<WebSocket | null>(null)
-  const attemptsRef = useRef(0)
-  const unmountedRef = useRef(false)
+  // Keep a stable ref to the latest handler so we can update it without
+  // re-subscribing (avoids tearing down the shared WS on every render).
+  const handlerRef = useRef<MessageHandler>(onMessage)
+  handlerRef.current = onMessage
 
-  const connect = useCallback(() => {
+  useEffect(() => {
     if (!accessToken || !user?.tenantSchema) return
-    if (attemptsRef.current >= MAX_RECONNECT_ATTEMPTS) return
 
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
     const url = `${protocol}://${window.location.host}/ws/${user.tenantSchema}/${channel}?token=${accessToken}`
+    const key = `${user.tenantSchema}/${channel}`
 
-    const ws = new WebSocket(url)
-    wsRef.current = ws
+    // Stable wrapper — always calls the latest handler via ref
+    const wrapper: MessageHandler = (data) => handlerRef.current(data)
 
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data as string)
-        onMessage(data)
-      } catch {
-        // ignore malformed messages
-      }
-    }
-
-    ws.onclose = (event) => {
-      if (unmountedRef.current) return
-      if (event.wasClean) return // closed intentionally
-      attemptsRef.current += 1
-      setTimeout(connect, RECONNECT_DELAY_MS)
-    }
-
-    ws.onerror = () => {
-      ws.close()
-    }
-  }, [accessToken, user?.tenantSchema, channel, onMessage])
-
-  useEffect(() => {
-    unmountedRef.current = false
-    attemptsRef.current = 0
-    connect()
+    const state = getOrCreate(key, url)
+    state.handlers.add(wrapper)
+    state.attempts = 0 // reset on fresh mount
+    openConnection(key)
 
     return () => {
-      unmountedRef.current = true
-      wsRef.current?.close(1000, 'Component unmounted')
+      state.handlers.delete(wrapper)
+      // Delay idle-close slightly so a page transition doesn't thrash the socket
+      setTimeout(() => closeIfIdle(key), 500)
     }
-  }, [connect])
+  }, [accessToken, user?.tenantSchema, channel])
+  // NOTE: onMessage is intentionally excluded — we read it via ref instead
 }
+

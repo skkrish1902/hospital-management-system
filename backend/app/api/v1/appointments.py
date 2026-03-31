@@ -383,6 +383,14 @@ async def checkin_appointment(
         "priority": priority,
         "appointment_id": str(appt_id),
     })
+    # Also broadcast visit:update so NurseVitalsPage gets real-time notification
+    await ws_manager.broadcast(tenant, "visit:update", {
+        "event": "visit_registered",
+        "visit_id": str(visit.id),
+        "appointment_id": str(appt_id),
+        "patient_id": str(visit.patient_id),
+        "doctor_id": str(visit.doctor_id),
+    })
 
     return CheckInResult(
         appointment_id=appt_id,

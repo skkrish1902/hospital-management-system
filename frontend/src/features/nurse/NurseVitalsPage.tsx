@@ -35,7 +35,11 @@ export default function NurseVitalsPage() {
     refetchInterval: 30_000,
   })
 
-  useWebSocket('visit:update', useCallback(() => refetch(), [refetch]))
+  // visit:update fires when vitals are saved, prescriptions written, etc.
+  // queue:update fires on check-in which creates a registered visit — subscribe to both.
+  const onUpdate = useCallback(() => refetch(), [refetch])
+  useWebSocket('visit:update', onUpdate)
+  useWebSocket('queue:update', onUpdate)
 
   const {
     register,
