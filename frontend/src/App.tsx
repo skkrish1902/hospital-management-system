@@ -10,6 +10,7 @@ import ConsultationPage from '@/features/doctor/ConsultationPage'
 import PrescriptionPage from '@/features/doctor/PrescriptionPage'
 import BillingPage from '@/features/billing/BillingPage'
 import DoctorsAdminPage from '@/features/admin/DoctorsAdminPage'
+import UsersAdminPage from '@/features/admin/UsersAdminPage'
 import AppointmentsPage from '@/features/appointments/AppointmentsPage'
 
 // Remaining placeholder pages
@@ -43,6 +44,7 @@ export default function App() {
             <Route path="/pharmacy" element={<PharmacyPage />} />
             <Route path="/billing" element={<BillingPage />} />
             <Route path="/admin/doctors" element={<DoctorsAdminPage />} />
+            <Route path="/admin/users" element={<UsersAdminPage />} />
           </Route>
         </Route>
 

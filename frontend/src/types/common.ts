@@ -75,6 +75,17 @@ export interface Doctor {
   is_active: boolean
 }
 
+export interface StaffUser {
+  id: UUID
+  full_name: string
+  email: string
+  username: string
+  phone?: string
+  role: string
+  is_active: boolean
+  tenant_name: string
+}
+
 export interface Department {
   id: UUID
   name: string

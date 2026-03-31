@@ -88,14 +88,21 @@ export const doctorService = {
 }
 
 export const userService = {
-  /** List users in the current tenant, optionally filtered by role. */
-  list: (role?: string) =>
-    apiClient
-      .get<{ id: string; full_name: string; email: string; role: string }[]>(
-        '/users',
-        role ? { params: { role } } : undefined,
-      )
-      .then(r => r.data),
+  /** List non-doctor staff users, optionally filtered by role. */
+  list: (params?: { role?: string; include_inactive?: boolean }) =>
+    apiClient.get<import('@/types/common').StaffUser[]>('/users', { params }).then(r => r.data),
+
+  create: (data: {
+    email: string
+    phone: string
+    password: string
+    username?: string
+    full_name: string
+    role: string
+  }) => apiClient.post<import('@/types/common').StaffUser>('/users', data).then(r => r.data),
+
+  update: (id: string, data: { full_name?: string; is_active?: boolean }) =>
+    apiClient.patch<import('@/types/common').StaffUser>(`/users/${id}`, data).then(r => r.data),
 }
 
 export const departmentService = {
