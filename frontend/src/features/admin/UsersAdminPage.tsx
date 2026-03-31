@@ -36,7 +36,6 @@ const createSchema = z.object({
     .string()
     .length(10, 'Enter exactly 10 digits')
     .regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number'),
-  password: z.string().min(8, 'Minimum 8 characters'),
   username: z
     .string()
     .min(3, 'Min 3 characters')
@@ -164,14 +163,14 @@ export default function UsersAdminPage() {
 
   const createMut = useMutation({
     mutationFn: userService.create,
-    onSuccess: (created, variables) => {
+    onSuccess: (created) => {
       qc.invalidateQueries({ queryKey: ['staff-users'] })
       setShowCreate(false)
       setCreatedCreds({
         full_name: created.full_name,
         username: created.username,
-        password: variables.password,
-        phone: created.phone ?? variables.phone,
+        password: created.temp_password,
+        phone: created.phone ?? '',
       })
     },
   })
@@ -334,17 +333,6 @@ export default function UsersAdminPage() {
                     onKeyDown={e => { if (!/[0-9]|Backspace|Delete|Tab|ArrowLeft|ArrowRight/.test(e.key)) e.preventDefault() }}
                   />
                 </div>
-              </FormField>
-              <FormField
-                label="Password"
-                error={createForm.formState.errors.password?.message}
-              >
-                <input
-                  {...createForm.register('password')}
-                  type="password"
-                  className={inputCls}
-                  placeholder="Min 8 characters"
-                />
               </FormField>
             </div>
 

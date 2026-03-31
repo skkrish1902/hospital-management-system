@@ -67,14 +67,13 @@ export const doctorService = {
     email: string
     phone: string
     username?: string
-    password: string
     full_name: string
     specialization: string
     department_id?: string
     consultation_fee?: number
     qualification?: string
     experience_years?: number
-  }) => apiClient.post<Doctor>('/doctors/onboard', data).then(r => r.data),
+  }) => apiClient.post<Doctor & { temp_password: string }>('/doctors/onboard', data).then(r => r.data),
 
   update: (id: string, data: Partial<{
     full_name: string
@@ -95,11 +94,10 @@ export const userService = {
   create: (data: {
     email: string
     phone: string
-    password: string
     username?: string
     full_name: string
     role: string
-  }) => apiClient.post<import('@/types/common').StaffUser>('/users', data).then(r => r.data),
+  }) => apiClient.post<import('@/types/common').StaffUser & { temp_password: string }>('/users', data).then(r => r.data),
 
   update: (id: string, data: { full_name?: string; is_active?: boolean }) =>
     apiClient.patch<import('@/types/common').StaffUser>(`/users/${id}`, data).then(r => r.data),

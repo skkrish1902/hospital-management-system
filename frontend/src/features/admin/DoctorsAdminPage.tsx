@@ -30,7 +30,6 @@ const doctorOnboardSchema = z.object({
     .regex(/^[a-z0-9_]+$/, 'Lowercase letters, digits, underscores only')
     .optional()
     .or(z.literal('')),
-  password: z.string().min(8, 'Minimum 8 characters'),
   full_name: z.string().min(1, 'Name required'),
   specialization: z.string().min(1, 'Specialization required'),
   department_id: z.string().uuid().optional().or(z.literal('')),
@@ -281,7 +280,7 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
         username: doctor.username ?? vars.full_name,
         email: vars.email,
         phone: vars.phone,
-        password: vars.password,
+        password: doctor.temp_password,
         full_name: vars.full_name,
       })
     },
@@ -472,9 +471,6 @@ function DoctorsTab({ departments }: { departments: Department[] }) {
                       createForm.register('username').onChange(e)
                     }}
                   />
-                </FormField>
-                <FormField label="Password" error={createForm.formState.errors.password?.message}>
-                  <input {...createForm.register('password')} type="password" className={inputCls} placeholder="Min 8 characters" />
                 </FormField>
               </div>
             </div>

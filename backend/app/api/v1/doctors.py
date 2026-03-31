@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_role
-from app.core.security import hash_password
+from app.core.security import hash_password, generate_temp_password
 from app.core.sms import send_doctor_credentials
 from app.core.username import generate_username
 from app.db.engine import get_session
@@ -82,6 +82,9 @@ async def onboard_doctor(
     if not tenant:
         raise HTTPException(status_code=400, detail="Tenant not found")
 
+    # Auto-generate password if not provided
+    temp_password = payload.password or generate_temp_password()
+
     # Check if a user with this email already exists
     existing_user = (await session.execute(
         select(User).where(User.email == payload.email)
@@ -99,9 +102,7 @@ async def onboard_doctor(
                 detail="A doctor profile already exists for this email"
             )
         # Resume: attach the doctor profile to the existing user account.
-        # Update the password with whatever the admin typed so the credentials
-        # shown in the UI modal are valid.
-        existing_user.hashed_password = hash_password(payload.password)
+        existing_user.hashed_password = hash_password(temp_password)
         new_user = existing_user
         username = existing_user.username
     else:
@@ -123,7 +124,7 @@ async def onboard_doctor(
             email=payload.email,
             username=username,
             phone=payload.phone,
-            hashed_password=hash_password(payload.password),
+            hashed_password=hash_password(temp_password),
             full_name=payload.full_name,
             role="doctor",
         )
@@ -151,9 +152,10 @@ async def onboard_doctor(
         to_phone=new_user.phone,
         full_name=new_user.full_name,
         username=new_user.username,
-        password=payload.password,
+        password=temp_password,
     )
 
+    enriched.temp_password = temp_password
     return enriched
 
 

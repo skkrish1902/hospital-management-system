@@ -37,6 +37,7 @@ class DoctorRead(BaseModel):
     qualification: Optional[str] = None
     experience_years: Optional[int] = None
     is_active: bool
+    temp_password: Optional[str] = None  # only set immediately after creation
 
     model_config = {"from_attributes": True}
 
@@ -50,7 +51,11 @@ class DoctorOnboard(BaseModel):
         pattern=r"^\+?[1-9]\d{9,14}$",
         description="Required. E.164 format recommended, e.g. +919876543210",
     )
-    password: str = Field(..., min_length=8, description="Min 8 characters")
+    password: Optional[str] = Field(
+        None,
+        min_length=8,
+        description="Auto-generated if omitted. Will be sent via SMS.",
+    )
     username: Optional[str] = Field(
         None,
         min_length=3,

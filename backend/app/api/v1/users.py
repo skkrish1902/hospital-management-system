@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_role
-from app.core.security import hash_password
+from app.core.security import hash_password, generate_temp_password
 from app.core.sms import send_doctor_credentials
 from app.core.username import generate_username
 from app.db.engine import get_session
@@ -26,7 +26,11 @@ MANAGEABLE_ROLES = {"receptionist", "nurse", "billing_officer", "hospital_admin"
 class UserCreate(BaseModel):
     email: EmailStr
     phone: str = Field(..., pattern=r"^\+?[1-9]\d{9,14}$")
-    password: str = Field(..., min_length=8)
+    password: Optional[str] = Field(
+        None,
+        min_length=8,
+        description="Auto-generated if omitted. Will be sent via SMS.",
+    )
     username: Optional[str] = Field(
         None, min_length=3, max_length=50, pattern=r"^[a-z0-9_]+$"
     )
@@ -112,6 +116,7 @@ async def create_user(
     if (await session.execute(select(User).where(User.email == payload.email))).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="A user with this email already exists")
 
+    temp_password = payload.password or generate_temp_password()
     username = payload.username or await generate_username(payload.full_name, session)
     if payload.username:
         if (await session.execute(select(User).where(User.username == username))).scalar_one_or_none():
@@ -124,7 +129,7 @@ async def create_user(
         email=payload.email,
         username=username,
         phone=payload.phone,
-        hashed_password=hash_password(payload.password),
+        hashed_password=hash_password(temp_password),
         full_name=payload.full_name,
         role=payload.role,
     )
@@ -135,11 +140,13 @@ async def create_user(
         to_phone=payload.phone,
         full_name=payload.full_name,
         username=username,
-        password=payload.password,
+        password=temp_password,
         hospital_name=tenant.hospital_name,
     )
 
-    return _row_to_dict(new_user)
+    result = _row_to_dict(new_user)
+    result["temp_password"] = temp_password
+    return result
 
 
 @router.patch("/{user_id}", response_model=dict)
