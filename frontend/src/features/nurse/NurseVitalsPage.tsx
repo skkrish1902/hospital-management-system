@@ -32,16 +32,20 @@ export default function NurseVitalsPage() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('vitals')
   const [selectedVisit, setSelectedVisit] = useState<Visit | null>(null)
   const [prescriptionVisitId, setPrescriptionVisitId] = useState<string | null>(null)
+  const [activeDeptId, setActiveDeptId] = useState<string | undefined>(undefined)
   const qc = useQueryClient()
 
-  // Fetch nurse's assigned department to filter visits
-  const { data: myDept } = useQuery({
-    queryKey: ['my-department'],
-    queryFn: () => nurseDeptService.myDepartment(),
+  // Fetch all departments this nurse is assigned to
+  const { data: myDepts = [] } = useQuery<import('@/types/common').NurseDepartment[]>({
+    queryKey: ['my-departments'],
+    queryFn: () => nurseDeptService.myDepartments(),
     retry: false,
   })
 
-  const deptId = myDept?.department_id
+  // Auto-select first dept on load (only when multi-dept and nothing chosen yet)
+  const deptId = myDepts.length === 1
+    ? myDepts[0].department_id
+    : activeDeptId
 
   const { data: registeredVisits = [], refetch: refetchRegistered } = useQuery({
     queryKey: ['visits', 'registered', deptId],
@@ -117,21 +121,43 @@ export default function NurseVitalsPage() {
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Nurse Station</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            {myDept ? `Department: ${myDept.department_name}` : 'All departments'}
+            {myDepts.length === 0
+              ? 'No department assigned'
+              : myDepts.length === 1
+              ? `Department: ${myDepts[0].department_name}`
+              : `${myDepts.length} departments assigned`}
           </p>
         </div>
-        <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
-          {(['vitals', 'dispatch'] as ActiveTab[]).map(tab => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-1.5 rounded-md text-xs font-medium capitalize transition-all ${
-                activeTab === tab ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
-              }`}
+        <div className="flex items-center gap-3">
+          {/* Dept selector shown when nurse manages multiple departments */}
+          {myDepts.length > 1 && (
+            <select
+              value={activeDeptId ?? ''}
+              onChange={e => {
+                setActiveDeptId(e.target.value || undefined)
+                setSelectedVisit(null)
+              }}
+              className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
             >
-              {tab === 'vitals' ? `Vitals (${registeredVisits.length})` : `Dispatch (${prescriptionDoneVisits.length})`}
-            </button>
-          ))}
+              <option value="">All departments</option>
+              {myDepts.map(d => (
+                <option key={d.department_id} value={d.department_id}>{d.department_name}</option>
+              ))}
+            </select>
+          )}
+          <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
+            {(['vitals', 'dispatch'] as ActiveTab[]).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-4 py-1.5 rounded-md text-xs font-medium capitalize transition-all ${
+                  activeTab === tab ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {tab === 'vitals' ? `Vitals (${registeredVisits.length})` : `Dispatch (${prescriptionDoneVisits.length})`}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

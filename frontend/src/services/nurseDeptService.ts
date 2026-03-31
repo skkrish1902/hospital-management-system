@@ -8,9 +8,15 @@ export const nurseDeptService = {
   assign: (user_id: string, department_id: string) =>
     apiClient.post<NurseDepartment>('/nurse-departments', { user_id, department_id }).then(r => r.data),
 
-  unassign: (userId: string) =>
+  /** Remove one specific nurse→dept assignment */
+  unassign: (userId: string, deptId: string) =>
+    apiClient.delete(`/nurse-departments/${userId}/${deptId}`),
+
+  /** Remove ALL dept assignments for a nurse */
+  unassignAll: (userId: string) =>
     apiClient.delete(`/nurse-departments/${userId}`),
 
-  myDepartment: () =>
-    apiClient.get<NurseDepartment | null>('/nurse-departments/my').then(r => r.data),
+  /** Returns all departments the logged-in nurse is assigned to */
+  myDepartments: () =>
+    apiClient.get<NurseDepartment[]>('/nurse-departments/my').then(r => r.data),
 }

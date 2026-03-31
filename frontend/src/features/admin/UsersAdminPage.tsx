@@ -179,7 +179,8 @@ export default function UsersAdminPage() {
   })
 
   const unassignMut = useMutation({
-    mutationFn: (userId: string) => nurseDeptService.unassign(userId),
+    mutationFn: ({ userId, deptId }: { userId: string; deptId: string }) =>
+      nurseDeptService.unassign(userId, deptId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['nurse-departments'] }),
   })
 
@@ -309,55 +310,67 @@ export default function UsersAdminPage() {
       {/* Nurse Department Assignment */}
       {nurses.length > 0 && departments.length > 0 && (
         <div className="space-y-3">
-          <h2 className="text-base font-semibold text-gray-800">Nurse — Department Assignment</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-semibold text-gray-800">Nurse — Department Assignment</h2>
+            <p className="text-xs text-gray-400">Each nurse can manage multiple departments</p>
+          </div>
           <div className="border border-gray-200 rounded-lg overflow-hidden">
             <table className="min-w-full divide-y divide-gray-200 text-sm">
               <thead className="bg-gray-50">
                 <tr>
-                  {['Nurse', 'Assigned Department', 'Action'].map(h => (
+                  {['Nurse', 'Assigned Departments', 'Add Department'].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 bg-white">
                 {nurses.map(nurse => {
-                  const assignment = nurseAssignments.find((a: any) => a.user_id === nurse.id)
+                  const assigned: any[] = nurseAssignments.filter((a: any) => a.user_id === nurse.id)
+                  const assignedIds = new Set(assigned.map((a: any) => a.department_id))
+                  const unassigned = departments.filter((d: any) => !assignedIds.has(d.id))
                   return (
-                    <tr key={nurse.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 font-medium text-gray-900">{nurse.full_name}</td>
-                      <td className="px-4 py-3 text-gray-600">
-                        {assignment ? (
-                          <span className="inline-flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-green-400 inline-block" />
-                            {departments.find((d: any) => d.id === assignment.department_id)?.name ?? assignment.department_id}
-                          </span>
+                    <tr key={nurse.id} className="hover:bg-gray-50 align-top">
+                      <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">{nurse.full_name}</td>
+                      <td className="px-4 py-3">
+                        {assigned.length === 0 ? (
+                          <span className="text-gray-400 italic text-xs">Unassigned</span>
                         ) : (
-                          <span className="text-gray-400 italic">Unassigned</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {assigned.map((a: any) => (
+                              <span
+                                key={a.department_id}
+                                className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2 py-0.5 text-xs font-medium"
+                              >
+                                {departments.find((d: any) => d.id === a.department_id)?.name ?? a.department_id}
+                                <button
+                                  onClick={() => unassignMut.mutate({ userId: nurse.id, deptId: a.department_id })}
+                                  className="hover:text-red-500 leading-none ml-0.5"
+                                  title="Remove"
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ))}
+                          </div>
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
+                        {unassigned.length > 0 ? (
                           <select
-                            defaultValue={assignment?.department_id ?? ''}
+                            value=""
                             onChange={e => {
                               if (e.target.value) assignMut.mutate({ userId: nurse.id, deptId: e.target.value })
                             }}
                             className="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
                           >
-                            <option value="">Assign department…</option>
-                            {departments.map((d: any) => (
+                            <option value="">+ Add department…</option>
+                            {unassigned.map((d: any) => (
                               <option key={d.id} value={d.id}>{d.name}</option>
                             ))}
                           </select>
-                          {assignment && (
-                            <button
-                              onClick={() => unassignMut.mutate(nurse.id)}
-                              className="text-xs text-red-400 hover:text-red-600"
-                            >
-                              Remove
-                            </button>
-                          )}
-                        </div>
+                        ) : (
+                          <span className="text-xs text-gray-400 italic">All departments assigned</span>
+                        )}
                       </td>
                     </tr>
                   )
