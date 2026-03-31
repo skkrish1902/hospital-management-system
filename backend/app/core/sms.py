@@ -41,7 +41,7 @@ def send_doctor_credentials(
 
     message_body = (
         f"Hello Dr. {full_name},\n\n"
-        f"Your login credentials for {hospital_name} HMS:\n"
+        f"Your login credentials for {hospital_name}:\n"
         f"  Username : {username}\n"
         f"  Password : {password}\n\n"
         f"Please change your password after first login.\n"
