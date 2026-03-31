@@ -34,8 +34,8 @@ const createSchema = z.object({
   email: z.string().email('Valid email required'),
   phone: z
     .string()
-    .min(1, 'Phone required')
-    .regex(/^\+?[1-9]\d{9,14}$/, 'Enter a valid phone number (e.g. +91XXXXXXXXXX)'),
+    .length(10, 'Enter exactly 10 digits')
+    .regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number'),
   password: z.string().min(8, 'Minimum 8 characters'),
   username: z
     .string()
@@ -194,7 +194,7 @@ export default function UsersAdminPage() {
   }
 
   const onCreateSubmit = (data: CreateForm) => {
-    createMut.mutate(data)
+    createMut.mutate({ ...data, phone: `+91${data.phone}` })
   }
 
   const toggleActive = (user: StaffUser) =>
@@ -321,12 +321,19 @@ export default function UsersAdminPage() {
 
             <div className="grid grid-cols-2 gap-4">
               <FormField label="Phone" error={createForm.formState.errors.phone?.message}>
-                <input
-                  {...createForm.register('phone')}
-                  type="tel"
-                  className={inputCls}
-                  placeholder="+91XXXXXXXXXX"
-                />
+                <div className="flex">
+                  <span className="inline-flex items-center px-3 rounded-l-lg border border-r-0 border-gray-300 bg-gray-50 text-gray-500 text-sm select-none">
+                    +91
+                  </span>
+                  <input
+                    {...createForm.register('phone')}
+                    type="tel"
+                    maxLength={10}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-r-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                    placeholder="9876543210"
+                    onKeyDown={e => { if (!/[0-9]|Backspace|Delete|Tab|ArrowLeft|ArrowRight/.test(e.key)) e.preventDefault() }}
+                  />
+                </div>
               </FormField>
               <FormField
                 label="Password"
