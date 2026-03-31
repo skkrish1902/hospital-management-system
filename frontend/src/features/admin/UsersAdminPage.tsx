@@ -156,7 +156,6 @@ export default function UsersAdminPage() {
   const [editing, setEditing] = useState<StaffUser | null>(null)
   const [showInactive, setShowInactive] = useState(false)
   const [createdCreds, setCreatedCreds] = useState<CreatedCreds | null>(null)
-  const [pendingPassword, setPendingPassword] = useState('')
 
   const { data: users = [], isLoading } = useQuery({
     queryKey: ['staff-users', showInactive],
@@ -174,7 +173,6 @@ export default function UsersAdminPage() {
         password: variables.password,
         phone: created.phone ?? variables.phone,
       })
-      setPendingPassword('')
     },
   })
 
@@ -196,7 +194,6 @@ export default function UsersAdminPage() {
   }
 
   const onCreateSubmit = (data: CreateForm) => {
-    setPendingPassword(data.password)
     createMut.mutate(data)
   }
 
