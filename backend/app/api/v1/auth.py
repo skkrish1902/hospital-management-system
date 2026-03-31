@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.engine import get_session
-from app.core.security import verify_password, create_access_token, create_refresh_token, decode_token
+from app.core.dependencies import get_current_user
+from app.core.security import verify_password, hash_password, create_access_token, create_refresh_token, decode_token
 from app.models.public.user import User, Tenant
 from app.schemas.auth import LoginRequest, TokenResponse, RefreshRequest
 
@@ -73,3 +75,27 @@ async def refresh(payload: RefreshRequest, session: AsyncSession = Depends(get_s
     access_token = create_access_token(subject=str(user.id), extra_claims=extra_claims)
     new_refresh = create_refresh_token(subject=str(user.id))
     return TokenResponse(access_token=access_token, refresh_token=new_refresh)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=8, description="Minimum 8 characters")
+
+
+@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
+async def change_password(
+    payload: ChangePasswordRequest,
+    session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Allow any authenticated user to change their own password."""
+    user_id: str = current_user.get("sub")
+    user = (await session.execute(
+        select(User).where(User.id == user_id, User.is_active == True)  # noqa: E712
+    )).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not verify_password(payload.current_password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    user.hashed_password = hash_password(payload.new_password)
+    await session.commit()

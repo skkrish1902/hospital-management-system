@@ -12,6 +12,7 @@ import BillingPage from '@/features/billing/BillingPage'
 import DoctorsAdminPage from '@/features/admin/DoctorsAdminPage'
 import UsersAdminPage from '@/features/admin/UsersAdminPage'
 import AppointmentsPage from '@/features/appointments/AppointmentsPage'
+import ChangePasswordPage from '@/features/auth/ChangePasswordPage'
 
 // Remaining placeholder pages
 const Dashboard = () => <div className="p-6"><h1 className="text-2xl font-semibold">Command Center</h1></div>
@@ -45,6 +46,7 @@ export default function App() {
             <Route path="/billing" element={<BillingPage />} />
             <Route path="/admin/doctors" element={<DoctorsAdminPage />} />
             <Route path="/admin/users" element={<UsersAdminPage />} />
+            <Route path="/change-password" element={<ChangePasswordPage />} />
           </Route>
         </Route>
 
