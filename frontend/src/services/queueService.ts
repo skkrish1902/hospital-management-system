@@ -18,4 +18,7 @@ export const queueService = {
 
   updateStatus: (tokenId: string, status: string) =>
     apiClient.patch<QueueToken>(`/queue/${tokenId}/status`, { status }).then(r => r.data),
+
+  checkIn: (tokenId: string) =>
+    apiClient.post<QueueToken>(`/queue/${tokenId}/checkin`).then(r => r.data),
 }

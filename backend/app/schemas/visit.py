@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 class VisitCreate(BaseModel):
     patient_id: uuid.UUID
-    doctor_id: uuid.UUID
+    doctor_id: Optional[uuid.UUID] = None
     appointment_id: Optional[uuid.UUID] = None
     department_id: Optional[uuid.UUID] = None
 
@@ -15,7 +15,7 @@ class VisitCreate(BaseModel):
 class VisitRead(BaseModel):
     id: uuid.UUID
     patient_id: uuid.UUID
-    doctor_id: uuid.UUID
+    doctor_id: Optional[uuid.UUID] = None
     appointment_id: Optional[uuid.UUID] = None
     department_id: Optional[uuid.UUID] = None
     status: str

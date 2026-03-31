@@ -21,6 +21,7 @@ from app.db.engine import get_session
 from app.models.tenant.department import Department
 from app.models.tenant.patient import Patient
 from app.models.tenant.queue_token import QueueToken
+from app.models.tenant.visit import Visit
 from app.schemas.queue import QueueTokenCreate, QueueTokenRead, QueueTokenStatusUpdate
 from app.websocket.manager import ws_manager
 
@@ -173,4 +174,97 @@ async def update_token_status(
     if patient:
         result.patient_name = f"{patient.first_name} {patient.last_name}"
         result.patient_phone = patient.phone
+    return result
+
+
+@router.post("/{token_id}/checkin", response_model=QueueTokenRead)
+async def checkin_walkin(
+    token_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(require_role("receptionist", "nurse", "hospital_admin", "super_admin")),
+):
+    """
+    Check-in a walk-in queue token:
+    1. Token status → 'called'
+    2. Create a Visit(status='registered') linked to this token's patient + department
+    3. Broadcast visit:update so NurseVitalsPage picks it up in real-time
+    """
+    token = await session.get(QueueToken, token_id)
+    if not token:
+        raise HTTPException(status_code=404, detail="Token not found")
+    if token.status not in ("waiting", "called"):
+        raise HTTPException(status_code=400, detail=f"Cannot check-in token with status '{token.status}'")
+
+    # Idempotent: if visit already created for this token, don't duplicate
+    existing_visit = (await session.execute(
+        select(Visit).where(Visit.appointment_id == None, Visit.patient_id == token.patient_id, Visit.status != "closed")  # noqa: E711
+    )).scalars().all()
+    # More precise: check via token link stored on token itself (we store visit_id on token if available)
+    # Since we don't have a direct FK, match by patient + department + same day
+    from datetime import date as _date
+    today_start = datetime.combine(_date.today(), datetime.min.time()).replace(tzinfo=timezone.utc)
+    dup = (await session.execute(
+        select(Visit).where(
+            Visit.patient_id == token.patient_id,
+            Visit.department_id == token.department_id,
+            Visit.created_at >= today_start,
+            Visit.status != "closed",
+        )
+    )).scalar_one_or_none()
+    if dup:
+        # Already checked in — just update token status
+        token.status = "called"
+        token.called_at = datetime.now(timezone.utc)
+        await session.commit()
+        await session.refresh(token)
+        patient = await session.get(Patient, token.patient_id)
+        result = QueueTokenRead.model_validate(token)
+        if patient:
+            result.patient_name = f"{patient.first_name} {patient.last_name}"
+            result.patient_phone = patient.phone
+        return result
+
+    # Mark token called
+    token.status = "called"
+    token.called_at = datetime.now(timezone.utc)
+
+    # Create Visit (doctor_id is NULL for walk-in; doctor assigned later during consultation)
+    visit = Visit(
+        id=uuid.uuid4(),
+        patient_id=token.patient_id,
+        doctor_id=None,
+        appointment_id=None,
+        department_id=token.department_id,
+        status="registered",
+    )
+    session.add(visit)
+    await session.commit()
+    await session.refresh(token)
+    await session.refresh(visit)
+
+    patient = await session.get(Patient, token.patient_id)
+    tenant = current_user.get("tenant_schema", "public")
+
+    # Broadcast token status change
+    await ws_manager.broadcast(tenant, "queue:update", {
+        "event": "token_updated",
+        "token_id": str(token.id),
+        "token_no": token.token_no,
+        "status": token.status,
+    })
+    # Broadcast new visit → NurseVitalsPage picks it up immediately
+    await ws_manager.broadcast(tenant, "visit:update", {
+        "event": "visit_registered",
+        "visit_id": str(visit.id),
+        "patient_id": str(visit.patient_id),
+        "department_id": str(visit.department_id) if visit.department_id else None,
+    })
+
+    result = QueueTokenRead.model_validate(token)
+    if patient:
+        result.patient_name = f"{patient.first_name} {patient.last_name}"
+        result.patient_phone = patient.phone
+    if token.department_id:
+        dept = await session.get(Department, token.department_id)
+        result.department_name = dept.name if dept else None
     return result

@@ -56,7 +56,7 @@ async def create_visit(
     await session.refresh(visit)
 
     patient = await session.get(Patient, visit.patient_id)
-    doctor = await session.get(Doctor, visit.doctor_id)
+    doctor = await session.get(Doctor, visit.doctor_id) if visit.doctor_id else None
     dept = await session.get(Department, visit.department_id) if visit.department_id else None
 
     result = VisitRead.model_validate(visit)
@@ -91,7 +91,7 @@ async def list_visits(
     for v in rows:
         item = VisitRead.model_validate(v)
         patient = await session.get(Patient, v.patient_id)
-        doctor = await session.get(Doctor, v.doctor_id)
+        doctor = await session.get(Doctor, v.doctor_id) if v.doctor_id else None
         dept = await session.get(Department, v.department_id) if v.department_id else None
         item.patient_name = f"{patient.first_name} {patient.last_name}" if patient else None
         item.doctor_name = doctor.full_name if doctor else None
@@ -110,7 +110,7 @@ async def get_visit(
     if not visit:
         raise HTTPException(status_code=404, detail="Visit not found")
     patient = await session.get(Patient, visit.patient_id)
-    doctor = await session.get(Doctor, visit.doctor_id)
+    doctor = await session.get(Doctor, visit.doctor_id) if visit.doctor_id else None
     dept = await session.get(Department, visit.department_id) if visit.department_id else None
     result = VisitRead.model_validate(visit)
     result.patient_name = f"{patient.first_name} {patient.last_name}" if patient else None
@@ -153,7 +153,7 @@ async def transition_visit_status(
     })
 
     patient = await session.get(Patient, visit.patient_id)
-    doctor = await session.get(Doctor, visit.doctor_id)
+    doctor = await session.get(Doctor, visit.doctor_id) if visit.doctor_id else None
     dept = await session.get(Department, visit.department_id) if visit.department_id else None
     result = VisitRead.model_validate(visit)
     result.patient_name = f"{patient.first_name} {patient.last_name}" if patient else None
@@ -231,7 +231,7 @@ async def dispatch_visit(
     })
 
     patient = await session.get(Patient, visit.patient_id)
-    doctor = await session.get(Doctor, visit.doctor_id)
+    doctor = await session.get(Doctor, visit.doctor_id) if visit.doctor_id else None
     dept = await session.get(Department, visit.department_id) if visit.department_id else None
     result = VisitRead.model_validate(visit)
     result.patient_name = f"{patient.first_name} {patient.last_name}" if patient else None

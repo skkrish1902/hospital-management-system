@@ -87,6 +87,11 @@ export default function QueuePage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['queue'] }),
   })
 
+  const { mutate: checkIn } = useMutation({
+    mutationFn: (tokenId: string) => queueService.checkIn(tokenId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['queue'] }),
+  })
+
   const waitingCount = tokens.filter(t => t.status === 'waiting').length
   const calledToken = tokens.find(t => t.status === 'called' || t.status === 'in_progress')
 
@@ -188,7 +193,10 @@ export default function QueuePage() {
                 <td className="px-4 py-3">
                   <div className="flex gap-2">
                     {token.status === 'waiting' && (
-                      <ActionBtn onClick={() => updateStatus({ tokenId: token.id, status: 'called' })} label="Call" color="blue" />
+                      <>
+                        <ActionBtn onClick={() => checkIn(token.id)} label="Check-in" color="green" />
+                        <ActionBtn onClick={() => updateStatus({ tokenId: token.id, status: 'called' })} label="Call" color="blue" />
+                      </>
                     )}
                     {token.status === 'called' && (
                       <>
