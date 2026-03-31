@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { queueService } from '@/services/queueService'
@@ -28,7 +29,9 @@ const STATUS_BADGE: Record<string, string> = {
 }
 
 export default function QueuePage() {
-  const [activeTab, setActiveTab] = useState<QueueType>('registration')
+  const [searchParams] = useSearchParams()
+  const initialTab = (searchParams.get('tab') as QueueType) ?? 'registration'
+  const [activeTab, setActiveTab] = useState<QueueType>(initialTab)
   const [issueForm, setIssueForm] = useState(false)
   const [patientSearch, setPatientSearch] = useState('')
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)

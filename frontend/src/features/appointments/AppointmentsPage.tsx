@@ -7,6 +7,7 @@
  *   Right: slot availability grid for selected doctor
  */
 import { useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -271,6 +272,7 @@ function SlotGrid({
 
 export default function AppointmentsPage() {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'))
   const [filterDoctorId, setFilterDoctorId] = useState<string>('')
   const [showBook, setShowBook] = useState(false)
@@ -304,6 +306,7 @@ export default function AppointmentsPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['appointments'] })
       qc.invalidateQueries({ queryKey: ['queue'] })
+      navigate('/queue?tab=consultation')
     },
   })
 
