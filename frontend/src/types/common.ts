@@ -100,6 +100,7 @@ export interface QueueToken {
   patient_id: UUID
   appointment_id?: UUID
   department_id?: UUID
+  doctor_id?: UUID
   token_no: number
   queue_type: QueueType
   priority: QueuePriority
@@ -111,6 +112,7 @@ export interface QueueToken {
   patient_name?: string
   patient_phone?: string
   department_name?: string
+  doctor_name?: string
 }
 
 export interface Visit {

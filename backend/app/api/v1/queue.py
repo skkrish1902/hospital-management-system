@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import get_current_user, require_role
 from app.db.engine import get_session
 from app.models.tenant.department import Department
+from app.models.tenant.doctor import Doctor
 from app.models.tenant.patient import Patient
 from app.models.tenant.queue_token import QueueToken
 from app.models.tenant.visit import Visit
@@ -65,6 +66,7 @@ async def issue_token(
         patient_id=payload.patient_id,
         appointment_id=payload.appointment_id,
         department_id=payload.department_id,
+        doctor_id=payload.doctor_id,
         token_no=token_no,
         queue_type=payload.queue_type,
         priority=payload.priority,
@@ -75,6 +77,7 @@ async def issue_token(
     await session.refresh(token)
 
     dept = await session.get(Department, payload.department_id) if payload.department_id else None
+    doctor = await session.get(Doctor, payload.doctor_id) if payload.doctor_id else None
 
     # Broadcast to WebSocket subscribers
     tenant = current_user.get("tenant_schema", "public")
@@ -92,6 +95,7 @@ async def issue_token(
     result.patient_name = f"{patient.first_name} {patient.last_name}"
     result.patient_phone = patient.phone
     result.department_name = dept.name if dept else None
+    result.doctor_name = doctor.full_name if doctor else None
     return result
 
 
@@ -136,6 +140,9 @@ async def list_queue(
         if token.department_id:
             dept = await session.get(Department, token.department_id)
             item.department_name = dept.name if dept else None
+        if token.doctor_id:
+            doctor = await session.get(Doctor, token.doctor_id)
+            item.doctor_name = doctor.full_name if doctor else None
         items.append(item)
     return items
 
@@ -228,11 +235,11 @@ async def checkin_walkin(
     token.status = "called"
     token.called_at = datetime.now(timezone.utc)
 
-    # Create Visit (doctor_id is NULL for walk-in; doctor assigned later during consultation)
+    # Create Visit (doctor_id comes from the pre-selected doctor on the token)
     visit = Visit(
         id=uuid.uuid4(),
         patient_id=token.patient_id,
-        doctor_id=None,
+        doctor_id=token.doctor_id,
         appointment_id=None,
         department_id=token.department_id,
         status="registered",

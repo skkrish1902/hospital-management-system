@@ -4,8 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { queueService } from '@/services/queueService'
 import { patientService } from '@/services/patientService'
-import { departmentService } from '@/services/clinicalService'
-import type { Patient, QueueType } from '@/types/common'
+import { departmentService, doctorService } from '@/services/clinicalService'
+import type { Doctor, Patient, QueueType } from '@/types/common'
 
 const QUEUE_TYPES: { value: QueueType; label: string; color: string }[] = [
   { value: 'registration', label: 'Registration', color: 'blue' },
@@ -38,6 +38,7 @@ export default function QueuePage() {
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
   const [priority, setPriority] = useState('normal')
   const [selectedDeptId, setSelectedDeptId] = useState<string>('')
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string>('')
   const [filterDeptId, setFilterDeptId] = useState<string>('')
   const qc = useQueryClient()
 
@@ -59,6 +60,13 @@ export default function QueuePage() {
     staleTime: 10_000,
   })
 
+  const { data: deptDoctors = [] } = useQuery<Doctor[]>({
+    queryKey: ['doctors', 'by-dept', selectedDeptId],
+    queryFn: () => doctorService.list({ department_id: selectedDeptId }),
+    enabled: !!selectedDeptId,
+    staleTime: 30_000,
+  })
+
   // Real-time updates
   useWebSocket('queue:update', useCallback(() => {
     refetch()
@@ -69,6 +77,7 @@ export default function QueuePage() {
       patient_id: selectedPatient!.id,
       queue_type: activeTab,
       department_id: selectedDeptId || undefined,
+      doctor_id: selectedDoctorId || undefined,
       priority,
     }),
     onSuccess: () => {
@@ -78,6 +87,7 @@ export default function QueuePage() {
       setPatientSearch('')
       setPriority('normal')
       setSelectedDeptId('')
+      setSelectedDoctorId('')
     },
   })
 
@@ -159,7 +169,7 @@ export default function QueuePage() {
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
-              {['Token', 'Priority', 'Patient', 'Phone', 'Department', 'Status', 'Issued', 'Actions'].map(h => (
+              {['Token', 'Priority', 'Patient', 'Phone', 'Department', 'Doctor', 'Status', 'Issued', 'Actions'].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
               ))}
             </tr>
@@ -182,6 +192,7 @@ export default function QueuePage() {
                 <td className="px-4 py-3 font-medium text-gray-900">{token.patient_name || '—'}</td>
                 <td className="px-4 py-3 text-gray-500">{token.patient_phone || '—'}</td>
                 <td className="px-4 py-3 text-gray-500 text-xs">{token.department_name || '—'}</td>
+                <td className="px-4 py-3 text-gray-500 text-xs">{token.doctor_name || '—'}</td>
                 <td className="px-4 py-3">
                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_BADGE[token.status] || ''}`}>
                     {token.status.replace('_', ' ')}
@@ -217,11 +228,11 @@ export default function QueuePage() {
 
       {/* Issue token modal */}
       {issueForm && (
-        <div className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center p-4" onClick={() => setIssueForm(false)}>
+        <div className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center p-4" onClick={() => { setIssueForm(false); setSelectedDoctorId(''); setSelectedDeptId('') }}>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-gray-100 flex items-center justify-between">
               <h2 className="font-semibold text-gray-900">Issue Queue Token</h2>
-              <button onClick={() => setIssueForm(false)} className="text-gray-400 hover:text-gray-700">
+              <button onClick={() => { setIssueForm(false); setSelectedDoctorId(''); setSelectedDeptId('') }} className="text-gray-400 hover:text-gray-700">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -282,7 +293,7 @@ export default function QueuePage() {
                   <label className="block text-xs font-medium text-gray-700 mb-1">Department</label>
                   <select
                     value={selectedDeptId}
-                    onChange={e => setSelectedDeptId(e.target.value)}
+                    onChange={e => { setSelectedDeptId(e.target.value); setSelectedDoctorId('') }}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   >
                     <option value="">— Select department —</option>
@@ -293,8 +304,29 @@ export default function QueuePage() {
                 </div>
               )}
 
+              {/* Doctor — shown once a department is selected */}
+              {selectedDeptId && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Doctor</label>
+                  {deptDoctors.length === 0 ? (
+                    <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">No doctors found for this department</p>
+                  ) : (
+                    <select
+                      value={selectedDoctorId}
+                      onChange={e => setSelectedDoctorId(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    >
+                      <option value="">— Select doctor —</option>
+                      {deptDoctors.map((d: Doctor) => (
+                        <option key={d.id} value={d.id}>{d.full_name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
+
               <div className="flex gap-3 pt-1">
-                <button onClick={() => setIssueForm(false)}
+                <button onClick={() => { setIssueForm(false); setSelectedDoctorId(''); setSelectedDeptId('') }}
                   className="flex-1 border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-50">
                   Cancel
                 </button>

@@ -9,6 +9,7 @@ class QueueTokenCreate(BaseModel):
     patient_id: uuid.UUID
     appointment_id: Optional[uuid.UUID] = None
     department_id: Optional[uuid.UUID] = None
+    doctor_id: Optional[uuid.UUID] = None
     queue_type: str = "registration"   # registration | vitals | consultation | pharmacy | billing
     priority: str = "normal"           # emergency | senior_citizen | normal
 
@@ -18,6 +19,7 @@ class QueueTokenRead(BaseModel):
     patient_id: uuid.UUID
     appointment_id: Optional[uuid.UUID] = None
     department_id: Optional[uuid.UUID] = None
+    doctor_id: Optional[uuid.UUID] = None
     token_no: int
     queue_type: str
     priority: str
@@ -29,6 +31,7 @@ class QueueTokenRead(BaseModel):
     patient_name: Optional[str] = None
     patient_phone: Optional[str] = None
     department_name: Optional[str] = None
+    doctor_name: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

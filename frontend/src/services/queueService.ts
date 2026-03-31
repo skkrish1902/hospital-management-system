@@ -5,6 +5,7 @@ export interface QueueTokenCreate {
   patient_id: string
   appointment_id?: string
   department_id?: string
+  doctor_id?: string
   queue_type?: string
   priority?: string
 }
