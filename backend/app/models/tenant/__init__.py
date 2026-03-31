@@ -12,6 +12,7 @@ from app.models.tenant.pharmacy_queue import PharmacyQueue
 from app.models.tenant.invoice import Invoice
 from app.models.tenant.feedback import Feedback
 from app.models.tenant.nurse_roster import NurseRoster
+from app.models.tenant.nurse_department import NurseDepartment
 from app.models.tenant.audit_log import AuditLog
 
 __all__ = [

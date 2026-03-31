@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_role
 from app.db.engine import get_session
+from app.models.tenant.lab_order import LabOrder
 from app.models.tenant.prescription import Prescription
 from app.models.tenant.visit import Visit
 from app.schemas.prescription import PrescriptionCreate, PrescriptionRead, PrescriptionUpdate
@@ -38,6 +39,16 @@ async def create_prescription(
     )
     session.add(prescription)
 
+    # If doctor included lab tests, create a LabOrder alongside the prescription
+    if payload.lab_tests:
+        lab_order = LabOrder(
+            id=uuid.uuid4(),
+            visit_id=payload.visit_id,
+            tests=[t.model_dump() for t in payload.lab_tests],
+            status="ordered",
+        )
+        session.add(lab_order)
+
     # Advance visit status after prescription is written
     if visit.status == "in_consultation":
         visit.status = "prescription_done"
@@ -51,6 +62,7 @@ async def create_prescription(
         "event": "prescription_created",
         "prescription_id": str(prescription.id),
         "visit_id": str(prescription.visit_id),
+        "has_lab_tests": bool(payload.lab_tests),
     })
 
     return prescription

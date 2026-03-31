@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { queueService } from '@/services/queueService'
 import { patientService } from '@/services/patientService'
+import { departmentService } from '@/services/clinicalService'
 import type { Patient, QueueType } from '@/types/common'
 
 const QUEUE_TYPES: { value: QueueType; label: string; color: string }[] = [
@@ -36,11 +37,18 @@ export default function QueuePage() {
   const [patientSearch, setPatientSearch] = useState('')
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
   const [priority, setPriority] = useState('normal')
+  const [selectedDeptId, setSelectedDeptId] = useState<string>('')
+  const [filterDeptId, setFilterDeptId] = useState<string>('')
   const qc = useQueryClient()
 
+  const { data: departments = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ['departments'],
+    queryFn: () => departmentService.list(),
+  })
+
   const { data: tokens = [], refetch } = useQuery({
-    queryKey: ['queue', activeTab],
-    queryFn: () => queueService.list({ queue_type: activeTab }),
+    queryKey: ['queue', activeTab, filterDeptId],
+    queryFn: () => queueService.list({ queue_type: activeTab, department_id: filterDeptId || undefined }),
     refetchInterval: 30_000,
   })
 
@@ -60,6 +68,7 @@ export default function QueuePage() {
     mutationFn: () => queueService.issue({
       patient_id: selectedPatient!.id,
       queue_type: activeTab,
+      department_id: selectedDeptId || undefined,
       priority,
     }),
     onSuccess: () => {
@@ -68,6 +77,7 @@ export default function QueuePage() {
       setSelectedPatient(null)
       setPatientSearch('')
       setPriority('normal')
+      setSelectedDeptId('')
     },
   })
 
@@ -98,6 +108,23 @@ export default function QueuePage() {
         </button>
       </div>
 
+      {/* Department filter */}
+      {departments.length > 0 && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">Filter by department:</span>
+          <select
+            value={filterDeptId}
+            onChange={e => setFilterDeptId(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          >
+            <option value="">All departments</option>
+            {departments.map(d => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {/* Stats bar */}
       <div className="grid grid-cols-3 gap-4">
         <StatCard label="Waiting" value={waitingCount} color="blue" />
@@ -127,7 +154,7 @@ export default function QueuePage() {
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
-              {['Token', 'Priority', 'Patient', 'Phone', 'Status', 'Issued', 'Actions'].map(h => (
+              {['Token', 'Priority', 'Patient', 'Phone', 'Department', 'Status', 'Issued', 'Actions'].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
               ))}
             </tr>
@@ -135,7 +162,7 @@ export default function QueuePage() {
           <tbody className="divide-y divide-gray-100">
             {tokens.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-gray-400">Queue is empty</td>
+                <td colSpan={8} className="px-4 py-10 text-center text-gray-400">Queue is empty</td>
               </tr>
             ) : tokens.map((token: any) => (
               <tr key={token.id} className="hover:bg-gray-50">
@@ -149,6 +176,7 @@ export default function QueuePage() {
                 </td>
                 <td className="px-4 py-3 font-medium text-gray-900">{token.patient_name || '—'}</td>
                 <td className="px-4 py-3 text-gray-500">{token.patient_phone || '—'}</td>
+                <td className="px-4 py-3 text-gray-500 text-xs">{token.department_name || '—'}</td>
                 <td className="px-4 py-3">
                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_BADGE[token.status] || ''}`}>
                     {token.status.replace('_', ' ')}
@@ -239,6 +267,23 @@ export default function QueuePage() {
                   <option value="emergency">Emergency</option>
                 </select>
               </div>
+
+              {/* Department */}
+              {departments.length > 0 && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Department</label>
+                  <select
+                    value={selectedDeptId}
+                    onChange={e => setSelectedDeptId(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  >
+                    <option value="">— Select department —</option>
+                    {departments.map(d => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="flex gap-3 pt-1">
                 <button onClick={() => setIssueForm(false)}

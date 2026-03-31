@@ -329,19 +329,9 @@ async def checkin_appointment(
         if age >= 60:
             priority = "senior_citizen"
 
-    # Next token_no for consultation queue today
-    from datetime import date as _date
-    today_start = datetime.combine(_date.today(), time.min, tzinfo=timezone.utc)
-    last_token = (await session.execute(
-        select(QueueToken.token_no)
-        .where(and_(
-            QueueToken.queue_type == "consultation",
-            QueueToken.issued_at >= today_start,
-        ))
-        .order_by(QueueToken.token_no.desc())
-        .limit(1)
-    )).scalar_one_or_none()
-    token_no = (last_token or 0) + 1
+    # Derive department from doctor
+    doctor = await session.get(Doctor, appt.doctor_id)
+    department_id = doctor.department_id if doctor else None
 
     # Create Visit
     visit = Visit(
@@ -349,15 +339,19 @@ async def checkin_appointment(
         patient_id=appt.patient_id,
         doctor_id=appt.doctor_id,
         appointment_id=appt_id,
+        department_id=department_id,
         status="registered",
     )
     session.add(visit)
 
-    # Create QueueToken
+    # Create QueueToken — numbered per department when available
+    from app.api.v1.queue import _next_token_no
+    token_no = await _next_token_no(session, "consultation", department_id)
     token = QueueToken(
         id=uuid.uuid4(),
         patient_id=appt.patient_id,
         appointment_id=appt_id,
+        department_id=department_id,
         token_no=token_no,
         queue_type="consultation",
         priority=priority,
@@ -380,6 +374,7 @@ async def checkin_appointment(
         "token_id": str(token.id),
         "token_no": token_no,
         "queue_type": "consultation",
+        "department_id": str(department_id) if department_id else None,
         "priority": priority,
         "appointment_id": str(appt_id),
     })
@@ -390,6 +385,7 @@ async def checkin_appointment(
         "appointment_id": str(appt_id),
         "patient_id": str(visit.patient_id),
         "doctor_id": str(visit.doctor_id),
+        "department_id": str(department_id) if department_id else None,
     })
 
     return CheckInResult(

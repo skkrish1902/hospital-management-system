@@ -29,6 +29,8 @@ export type VisitStatus =
   | 'vitals_done'
   | 'in_consultation'
   | 'prescription_done'
+  | 'dispatched_pharmacy'
+  | 'dispatched_lab'
   | 'billing_pending'
   | 'closed'
 
@@ -97,6 +99,7 @@ export interface QueueToken {
   id: UUID
   patient_id: UUID
   appointment_id?: UUID
+  department_id?: UUID
   token_no: number
   queue_type: QueueType
   priority: QueuePriority
@@ -107,6 +110,7 @@ export interface QueueToken {
   patient?: Patient
   patient_name?: string
   patient_phone?: string
+  department_name?: string
 }
 
 export interface Visit {
@@ -114,6 +118,7 @@ export interface Visit {
   patient_id: UUID
   doctor_id: UUID
   appointment_id?: UUID
+  department_id?: UUID
   status: VisitStatus
   created_at: string
   closed_at?: string
@@ -121,6 +126,7 @@ export interface Visit {
   doctor?: Doctor
   patient_name?: string
   doctor_name?: string
+  department_name?: string
 }
 
 export interface Vitals {
@@ -161,7 +167,10 @@ export interface Prescription {
   id: UUID
   visit_id: UUID
   medicines: MedicineItem[]
+  lab_tests?: { test_name: string; notes?: string }[]
   instructions?: string
+  diagnosis?: string
+  notes?: string
   created_at: string
 }
 
@@ -197,6 +206,45 @@ export interface Appointment {
   created_at: string
   patient_name?: string
   doctor_name?: string
+}
+
+export interface NurseDepartment {
+  id: UUID
+  user_id: UUID
+  department_id: UUID
+  assigned_at: string
+  assigned_by: UUID
+  nurse_name?: string
+  department_name?: string
+}
+
+export interface LabOrder {
+  id: UUID
+  visit_id: UUID
+  tests: { test: string; notes?: string }[]
+  status: 'ordered' | 'sample_collected' | 'processing' | 'resulted'
+  ordered_at: string
+  patient_name?: string
+  doctor_name?: string
+}
+
+export interface LabResult {
+  id: UUID
+  lab_order_id: UUID
+  results: Record<string, string>
+  reported_by_user_id?: UUID
+  reported_at: string
+}
+
+export interface PharmacyQueueItem {
+  id: UUID
+  prescription_id: UUID
+  visit_id?: UUID
+  status: 'pending' | 'preparing' | 'ready' | 'partial' | 'dispensed'
+  notes?: string
+  updated_at: string
+  patient_name?: string
+  medicines?: { name: string; dose: string; frequency: string; duration: string; route: string }[]
 }
 
 export interface AppointmentSlot {

@@ -4,7 +4,9 @@ Queue tokens API — priority-based token allocation engine.
 Priority ordering for token_no assignment:
   emergency > senior_citizen > normal
 
-Daily sequence resets are NOT implemented in v1 — tokens are sequential per-day per queue_type.
+Token numbering is per-department per-day when department_id is provided,
+falling back to per-queue_type per-day for legacy/undepartment tokens.
+Daily sequence resets at midnight.
 """
 import uuid
 from datetime import date, datetime, timezone
@@ -16,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, require_role
 from app.db.engine import get_session
+from app.models.tenant.department import Department
 from app.models.tenant.patient import Patient
 from app.models.tenant.queue_token import QueueToken
 from app.schemas.queue import QueueTokenCreate, QueueTokenRead, QueueTokenStatusUpdate
@@ -26,16 +29,20 @@ router = APIRouter()
 _PRIORITY_ORDER = {"emergency": 0, "senior_citizen": 1, "normal": 2}
 
 
-async def _next_token_no(session: AsyncSession, queue_type: str) -> int:
-    """Daily sequential token number per queue_type."""
+async def _next_token_no(
+    session: AsyncSession,
+    queue_type: str,
+    department_id: Optional[uuid.UUID] = None,
+) -> int:
+    """Daily sequential token number, scoped per department when provided."""
     today_start = datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=timezone.utc)
+    filters = [QueueToken.issued_at >= today_start]
+    if department_id:
+        filters.append(QueueToken.department_id == department_id)
+    else:
+        filters.append(QueueToken.queue_type == queue_type)
     result = await session.execute(
-        select(func.max(QueueToken.token_no)).where(
-            and_(
-                QueueToken.queue_type == queue_type,
-                QueueToken.issued_at >= today_start,
-            )
-        )
+        select(func.max(QueueToken.token_no)).where(and_(*filters))
     )
     max_no = result.scalar()
     return (max_no or 0) + 1
@@ -51,11 +58,12 @@ async def issue_token(
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
 
-    token_no = await _next_token_no(session, payload.queue_type)
+    token_no = await _next_token_no(session, payload.queue_type, payload.department_id)
     token = QueueToken(
         id=uuid.uuid4(),
         patient_id=payload.patient_id,
         appointment_id=payload.appointment_id,
+        department_id=payload.department_id,
         token_no=token_no,
         queue_type=payload.queue_type,
         priority=payload.priority,
@@ -65,11 +73,14 @@ async def issue_token(
     await session.commit()
     await session.refresh(token)
 
+    dept = await session.get(Department, payload.department_id) if payload.department_id else None
+
     # Broadcast to WebSocket subscribers
     tenant = current_user.get("tenant_schema", "public")
     await ws_manager.broadcast(tenant, "queue:update", {
         "event": "token_issued",
         "queue_type": token.queue_type,
+        "department_id": str(token.department_id) if token.department_id else None,
         "token_no": token.token_no,
         "priority": token.priority,
         "patient_id": str(token.patient_id),
@@ -79,12 +90,14 @@ async def issue_token(
     result = QueueTokenRead.model_validate(token)
     result.patient_name = f"{patient.first_name} {patient.last_name}"
     result.patient_phone = patient.phone
+    result.department_name = dept.name if dept else None
     return result
 
 
 @router.get("", response_model=List[QueueTokenRead])
 async def list_queue(
     queue_type: Optional[str] = Query(None),
+    department_id: Optional[uuid.UUID] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
     session: AsyncSession = Depends(get_session),
     _: dict = Depends(require_role("receptionist", "nurse", "doctor", "hospital_admin", "super_admin")),
@@ -98,6 +111,8 @@ async def list_queue(
     )
     if queue_type:
         stmt = stmt.where(QueueToken.queue_type == queue_type)
+    if department_id:
+        stmt = stmt.where(QueueToken.department_id == department_id)
     if status_filter:
         stmt = stmt.where(QueueToken.status == status_filter)
 
@@ -117,6 +132,9 @@ async def list_queue(
         item = QueueTokenRead.model_validate(token)
         item.patient_name = f"{patient.first_name} {patient.last_name}"
         item.patient_phone = patient.phone
+        if token.department_id:
+            dept = await session.get(Department, token.department_id)
+            item.department_name = dept.name if dept else None
         items.append(item)
     return items
 

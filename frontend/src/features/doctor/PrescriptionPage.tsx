@@ -26,9 +26,15 @@ const medicineSchema = z.object({
   notes: z.string().optional(),
 })
 
+const labTestSchema = z.object({
+  test_name: z.string().min(1, 'Test name required'),
+  notes: z.string().optional(),
+})
+
 const rxSchema = z.object({
   medicines: z.array(medicineSchema).min(1, 'Add at least one medicine'),
   instructions: z.string().optional(),
+  lab_tests: z.array(labTestSchema).optional(),
 })
 
 type RxForm = z.infer<typeof rxSchema>
@@ -50,16 +56,18 @@ export default function PrescriptionPage() {
     formState: { errors },
   } = useForm<RxForm>({
     resolver: zodResolver(rxSchema),
-    defaultValues: { medicines: [{ name: '', dose: '', frequency: 'OD', duration: '5 days', route: 'oral' }] },
+    defaultValues: { medicines: [{ name: '', dose: '', frequency: 'OD', duration: '5 days', route: 'oral' }], lab_tests: [] },
   })
 
   const { fields, append, remove } = useFieldArray({ control, name: 'medicines' })
+  const { fields: labFields, append: appendLab, remove: removeLab } = useFieldArray({ control, name: 'lab_tests' })
 
   const { mutate: savePrescription, isPending } = useMutation({
     mutationFn: (data: RxForm) => prescriptionService.create({
       visit_id: visitId!,
       medicines: data.medicines,
       instructions: data.instructions,
+      lab_tests: data.lab_tests?.length ? data.lab_tests : undefined,
     }),
     onSuccess: () => navigate(`/billing?visitId=${visitId}`),
   })
@@ -164,6 +172,58 @@ export default function PrescriptionPage() {
               </div>
             ))}
           </div>
+        </div>
+
+        {/* Lab Tests */}
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="px-5 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-gray-700">Lab Tests <span className="text-gray-400 font-normal">(optional)</span></h2>
+            <button
+              type="button"
+              onClick={() => appendLab({ test_name: '', notes: '' })}
+              className="text-xs text-primary hover:underline font-medium flex items-center gap-1"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add Test
+            </button>
+          </div>
+
+          {labFields.length === 0 ? (
+            <p className="px-5 py-4 text-xs text-gray-400">No lab tests added. Click "Add Test" to add.</p>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {labFields.map((field, i) => (
+                <div key={field.id} className="px-5 py-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1">
+                      <input
+                        {...register(`lab_tests.${i}.test_name`)}
+                        placeholder="e.g. CBC, Blood Sugar, Urine Routine…"
+                        className={rx_input(!!errors.lab_tests?.[i]?.test_name)}
+                      />
+                      {errors.lab_tests?.[i]?.test_name && (
+                        <p className="text-xs text-red-600 mt-0.5">{errors.lab_tests[i]?.test_name?.message}</p>
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <input
+                        {...register(`lab_tests.${i}.notes`)}
+                        placeholder="Instructions / notes (optional)"
+                        className={rx_input(false)}
+                      />
+                    </div>
+                    <button type="button" onClick={() => removeLab(i)} className="text-gray-400 hover:text-red-500 shrink-0">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Instructions */}

@@ -11,10 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_role
 from app.db.engine import get_session
+from app.models.tenant.department import Department
 from app.models.tenant.doctor import Doctor
+from app.models.tenant.lab_order import LabOrder
 from app.models.tenant.patient import Patient
+from app.models.tenant.pharmacy_queue import PharmacyQueue
+from app.models.tenant.prescription import Prescription
 from app.models.tenant.visit import Visit
-from app.schemas.visit import VisitCreate, VisitRead, VisitStatusUpdate
+from app.schemas.visit import VisitCreate, VisitDispatch, VisitRead, VisitStatusUpdate
 from app.websocket.manager import ws_manager
 
 router = APIRouter()
@@ -23,7 +27,9 @@ _VALID_TRANSITIONS = {
     "registered": {"vitals_done"},
     "vitals_done": {"in_consultation"},
     "in_consultation": {"prescription_done"},
-    "prescription_done": {"billing_pending"},
+    "prescription_done": {"dispatched_pharmacy", "dispatched_lab", "billing_pending"},
+    "dispatched_pharmacy": {"billing_pending"},
+    "dispatched_lab": {"closed"},
     "billing_pending": {"closed"},
     "closed": set(),
 }
@@ -42,6 +48,7 @@ async def create_visit(
         patient_id=payload.patient_id,
         doctor_id=payload.doctor_id,
         appointment_id=payload.appointment_id,
+        department_id=payload.department_id,
         status="registered",
     )
     session.add(visit)
@@ -50,10 +57,12 @@ async def create_visit(
 
     patient = await session.get(Patient, visit.patient_id)
     doctor = await session.get(Doctor, visit.doctor_id)
+    dept = await session.get(Department, visit.department_id) if visit.department_id else None
 
     result = VisitRead.model_validate(visit)
     result.patient_name = f"{patient.first_name} {patient.last_name}" if patient else None
     result.doctor_name = doctor.full_name if doctor else None
+    result.department_name = dept.name if dept else None
     return result
 
 
@@ -61,6 +70,7 @@ async def create_visit(
 async def list_visits(
     patient_id: Optional[uuid.UUID] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
+    department_id: Optional[uuid.UUID] = Query(None),
     open_only: bool = Query(False),
     session: AsyncSession = Depends(get_session),
     _: dict = Depends(require_role(*ALLOWED_ROLES)),
@@ -70,6 +80,8 @@ async def list_visits(
         stmt = stmt.where(Visit.patient_id == patient_id)
     if status_filter:
         stmt = stmt.where(Visit.status == status_filter)
+    if department_id:
+        stmt = stmt.where(Visit.department_id == department_id)
     if open_only:
         stmt = stmt.where(Visit.closed_at == None)  # noqa: E711
     stmt = stmt.order_by(Visit.created_at.desc())
@@ -80,8 +92,10 @@ async def list_visits(
         item = VisitRead.model_validate(v)
         patient = await session.get(Patient, v.patient_id)
         doctor = await session.get(Doctor, v.doctor_id)
+        dept = await session.get(Department, v.department_id) if v.department_id else None
         item.patient_name = f"{patient.first_name} {patient.last_name}" if patient else None
         item.doctor_name = doctor.full_name if doctor else None
+        item.department_name = dept.name if dept else None
         items.append(item)
     return items
 
@@ -97,9 +111,11 @@ async def get_visit(
         raise HTTPException(status_code=404, detail="Visit not found")
     patient = await session.get(Patient, visit.patient_id)
     doctor = await session.get(Doctor, visit.doctor_id)
+    dept = await session.get(Department, visit.department_id) if visit.department_id else None
     result = VisitRead.model_validate(visit)
     result.patient_name = f"{patient.first_name} {patient.last_name}" if patient else None
     result.doctor_name = doctor.full_name if doctor else None
+    result.department_name = dept.name if dept else None
     return result
 
 
@@ -138,7 +154,87 @@ async def transition_visit_status(
 
     patient = await session.get(Patient, visit.patient_id)
     doctor = await session.get(Doctor, visit.doctor_id)
+    dept = await session.get(Department, visit.department_id) if visit.department_id else None
     result = VisitRead.model_validate(visit)
     result.patient_name = f"{patient.first_name} {patient.last_name}" if patient else None
     result.doctor_name = doctor.full_name if doctor else None
+    result.department_name = dept.name if dept else None
+    return result
+
+
+@router.post("/{visit_id}/dispatch", response_model=VisitRead)
+async def dispatch_visit(
+    visit_id: uuid.UUID,
+    payload: VisitDispatch,
+    session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(require_role("nurse", "hospital_admin", "super_admin")),
+):
+    """
+    Nurse dispatch after prescription_done:
+      - billing   → visit → billing_pending (no pharmacy/lab)
+      - pharmacy  → create PharmacyQueue + visit → dispatched_pharmacy
+      - lab       → activate LabOrder + visit → dispatched_lab → closed
+    """
+    visit = await session.get(Visit, visit_id)
+    if not visit:
+        raise HTTPException(status_code=404, detail="Visit not found")
+    if visit.status != "prescription_done":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dispatch only allowed from prescription_done (current: {visit.status})",
+        )
+
+    if payload.action == "billing":
+        visit.status = "billing_pending"
+
+    elif payload.action == "pharmacy":
+        # Find the prescription for this visit
+        rx = (await session.execute(
+            select(Prescription).where(Prescription.visit_id == visit_id)
+        )).scalar_one_or_none()
+        if not rx:
+            raise HTTPException(status_code=400, detail="No prescription found for this visit")
+        pq = PharmacyQueue(
+            id=uuid.uuid4(),
+            prescription_id=rx.id,
+            status="pending",
+        )
+        session.add(pq)
+        visit.status = "dispatched_pharmacy"
+
+    elif payload.action == "lab":
+        # Activate the lab order (doctor should have already created it via prescriptions API)
+        lab_order = (await session.execute(
+            select(LabOrder).where(LabOrder.visit_id == visit_id)
+        )).scalar_one_or_none()
+        if not lab_order:
+            raise HTTPException(status_code=400, detail="No lab order found for this visit — doctor must add lab tests first")
+        lab_order.status = "sample_collected"
+        visit.status = "dispatched_lab"
+        # Lab dispatch closes the current visit; patient comes back with results
+        visit.closed_at = datetime.now(timezone.utc)
+        visit.status = "closed"
+
+    await session.commit()
+    await session.refresh(visit)
+
+    tenant = current_user.get("tenant_schema", "public")
+    await ws_manager.broadcast(tenant, "visit:update", {
+        "event": "visit_dispatched",
+        "visit_id": str(visit.id),
+        "action": payload.action,
+        "status": visit.status,
+    })
+    await ws_manager.broadcast(tenant, "pharmacy:update" if payload.action == "pharmacy" else "visit:update", {
+        "event": "pharmacy_queue_created" if payload.action == "pharmacy" else "lab_dispatched",
+        "visit_id": str(visit.id),
+    })
+
+    patient = await session.get(Patient, visit.patient_id)
+    doctor = await session.get(Doctor, visit.doctor_id)
+    dept = await session.get(Department, visit.department_id) if visit.department_id else None
+    result = VisitRead.model_validate(visit)
+    result.patient_name = f"{patient.first_name} {patient.last_name}" if patient else None
+    result.doctor_name = doctor.full_name if doctor else None
+    result.department_name = dept.name if dept else None
     return result

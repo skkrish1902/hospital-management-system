@@ -14,6 +14,7 @@ class QueueToken(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     patient_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("patients.id"), nullable=False, index=True)
     appointment_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("appointments.id"))
+    department_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("departments.id"), index=True)
     token_no: Mapped[int] = mapped_column(Integer, nullable=False)
     queue_type: Mapped[str] = mapped_column(String(20), nullable=False)
     # queue_type: registration | vitals | consultation | pharmacy | billing

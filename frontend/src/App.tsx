@@ -13,12 +13,12 @@ import DoctorsAdminPage from '@/features/admin/DoctorsAdminPage'
 import UsersAdminPage from '@/features/admin/UsersAdminPage'
 import AppointmentsPage from '@/features/appointments/AppointmentsPage'
 import ChangePasswordPage from '@/features/auth/ChangePasswordPage'
+import PharmacyPage from '@/features/pharmacy/PharmacyPage'
+import LabPage from '@/features/lab/LabPage'
 
 // Remaining placeholder pages
 const Dashboard = () => <div className="p-6"><h1 className="text-2xl font-semibold">Command Center</h1></div>
 const RosterPage = () => <div className="p-6"><h1 className="text-2xl font-semibold">Nurse Roster</h1></div>
-const LabPage = () => <div className="p-6"><h1 className="text-2xl font-semibold">Lab Orders</h1></div>
-const PharmacyPage = () => <div className="p-6"><h1 className="text-2xl font-semibold">Pharmacy Queue</h1></div>
 
 export default function App() {
   return (

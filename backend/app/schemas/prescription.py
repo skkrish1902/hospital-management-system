@@ -14,15 +14,22 @@ class MedicineItem(BaseModel):
     notes: Optional[str] = None
 
 
+class LabTestItem(BaseModel):
+    test: str
+    notes: Optional[str] = None
+
+
 class PrescriptionCreate(BaseModel):
     visit_id: uuid.UUID
     medicines: Optional[List[MedicineItem]] = None
     instructions: Optional[str] = None
+    lab_tests: Optional[List[LabTestItem]] = None  # doctor can include lab tests with prescription
 
 
 class PrescriptionUpdate(BaseModel):
     medicines: Optional[List[MedicineItem]] = None
     instructions: Optional[str] = None
+    lab_tests: Optional[List[LabTestItem]] = None
 
 
 class PrescriptionRead(BaseModel):

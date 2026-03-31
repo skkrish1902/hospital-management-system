@@ -5,6 +5,7 @@ export interface VisitCreate {
   patient_id: string
   doctor_id: string
   appointment_id?: string
+  department_id?: string
 }
 
 export interface VitalsCreate {
@@ -29,7 +30,7 @@ export interface ConsultationCreate {
 }
 
 export const visitService = {
-  list: (params?: { patient_id?: string; status?: string; open_only?: boolean }) =>
+  list: (params?: { patient_id?: string; status?: string; department_id?: string; open_only?: boolean }) =>
     apiClient.get<Visit[]>('/visits', { params }).then(r => r.data),
 
   get: (id: string) =>
@@ -40,6 +41,9 @@ export const visitService = {
 
   updateStatus: (id: string, status: string) =>
     apiClient.patch<Visit>(`/visits/${id}/status`, { status }).then(r => r.data),
+
+  dispatch: (id: string, action: 'billing' | 'pharmacy' | 'lab') =>
+    apiClient.post<Visit>(`/visits/${id}/dispatch`, { action }).then(r => r.data),
 }
 
 export const vitalsService = {
