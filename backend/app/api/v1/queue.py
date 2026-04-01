@@ -23,7 +23,7 @@ from app.models.tenant.doctor import Doctor
 from app.models.tenant.patient import Patient
 from app.models.tenant.queue_token import QueueToken
 from app.models.tenant.visit import Visit
-from app.schemas.queue import QueueTokenCreate, QueueTokenRead, QueueTokenStatusUpdate
+from app.schemas.queue import QueueTokenCreate, QueueTokenRead, QueueTokenStatusUpdate, QueueTokenUpdate
 from app.websocket.manager import ws_manager
 
 router = APIRouter()
@@ -61,6 +61,7 @@ async def issue_token(
         raise HTTPException(status_code=404, detail="Patient not found")
 
     token_no = await _next_token_no(session, payload.queue_type, payload.department_id)
+    now = datetime.now(timezone.utc)
     token = QueueToken(
         id=uuid.uuid4(),
         patient_id=payload.patient_id,
@@ -70,16 +71,28 @@ async def issue_token(
         token_no=token_no,
         queue_type=payload.queue_type,
         priority=payload.priority,
-        status="waiting",
+        status="checked_in",
+        called_at=now,
     )
     session.add(token)
+
+    # Auto-create Visit immediately on token issuance
+    visit = Visit(
+        id=uuid.uuid4(),
+        patient_id=payload.patient_id,
+        doctor_id=payload.doctor_id,
+        appointment_id=payload.appointment_id,
+        department_id=payload.department_id,
+        status="registered",
+    )
+    session.add(visit)
+
     await session.commit()
     await session.refresh(token)
 
     dept = await session.get(Department, payload.department_id) if payload.department_id else None
     doctor = await session.get(Doctor, payload.doctor_id) if payload.doctor_id else None
 
-    # Broadcast to WebSocket subscribers
     tenant = current_user.get("tenant_schema", "public")
     await ws_manager.broadcast(tenant, "queue:update", {
         "event": "token_issued",
@@ -89,6 +102,12 @@ async def issue_token(
         "priority": token.priority,
         "patient_id": str(token.patient_id),
         "patient_name": f"{patient.first_name} {patient.last_name}",
+    })
+    await ws_manager.broadcast(tenant, "visit:update", {
+        "event": "visit_registered",
+        "visit_id": str(visit.id),
+        "patient_id": str(visit.patient_id),
+        "department_id": str(visit.department_id) if visit.department_id else None,
     })
 
     result = QueueTokenRead.model_validate(token)
@@ -147,6 +166,94 @@ async def list_queue(
     return items
 
 
+@router.patch("/{token_id}", response_model=QueueTokenRead)
+async def edit_token(
+    token_id: uuid.UUID,
+    payload: QueueTokenUpdate,
+    session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(require_role("receptionist", "hospital_admin", "super_admin")),
+):
+    """Edit department, doctor, or priority on a checked_in token."""
+    token = await session.get(QueueToken, token_id)
+    if not token:
+        raise HTTPException(status_code=404, detail="Token not found")
+    if token.status != "checked_in":
+        raise HTTPException(status_code=400, detail="Only checked_in tokens can be edited")
+
+    if payload.department_id is not None:
+        token.department_id = payload.department_id
+    if payload.doctor_id is not None:
+        token.doctor_id = payload.doctor_id
+    if payload.priority is not None:
+        token.priority = payload.priority
+
+    await session.commit()
+    await session.refresh(token)
+
+    patient = await session.get(Patient, token.patient_id)
+    dept = await session.get(Department, token.department_id) if token.department_id else None
+    doctor = await session.get(Doctor, token.doctor_id) if token.doctor_id else None
+
+    tenant = current_user.get("tenant_schema", "public")
+    await ws_manager.broadcast(tenant, "queue:update", {
+        "event": "token_updated",
+        "token_id": str(token.id),
+        "token_no": token.token_no,
+        "status": token.status,
+    })
+
+    result = QueueTokenRead.model_validate(token)
+    if patient:
+        result.patient_name = f"{patient.first_name} {patient.last_name}"
+        result.patient_phone = patient.phone
+    result.department_name = dept.name if dept else None
+    result.doctor_name = doctor.full_name if doctor else None
+    return result
+
+
+@router.post("/{token_id}/cancel", response_model=QueueTokenRead)
+async def cancel_token(
+    token_id: uuid.UUID,
+    payload: QueueTokenStatusUpdate,
+    session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(require_role("receptionist", "hospital_admin", "super_admin")),
+):
+    """Cancel a checked_in token. Notes are mandatory."""
+    token = await session.get(QueueToken, token_id)
+    if not token:
+        raise HTTPException(status_code=404, detail="Token not found")
+    if token.status != "checked_in":
+        raise HTTPException(status_code=400, detail="Only checked_in tokens can be cancelled")
+    if not payload.notes or not payload.notes.strip():
+        raise HTTPException(status_code=422, detail="Cancellation notes are required")
+
+    token.status = "cancelled"
+    token.notes = payload.notes.strip()
+    token.cancelled_at = datetime.now(timezone.utc)
+
+    await session.commit()
+    await session.refresh(token)
+
+    patient = await session.get(Patient, token.patient_id)
+    dept = await session.get(Department, token.department_id) if token.department_id else None
+    doctor = await session.get(Doctor, token.doctor_id) if token.doctor_id else None
+
+    tenant = current_user.get("tenant_schema", "public")
+    await ws_manager.broadcast(tenant, "queue:update", {
+        "event": "token_cancelled",
+        "token_id": str(token.id),
+        "token_no": token.token_no,
+    })
+
+    result = QueueTokenRead.model_validate(token)
+    if patient:
+        result.patient_name = f"{patient.first_name} {patient.last_name}"
+        result.patient_phone = patient.phone
+    result.department_name = dept.name if dept else None
+    result.doctor_name = doctor.full_name if doctor else None
+    return result
+
+
 @router.patch("/{token_id}/status", response_model=QueueTokenRead)
 async def update_token_status(
     token_id: uuid.UUID,
@@ -154,20 +261,22 @@ async def update_token_status(
     session: AsyncSession = Depends(get_session),
     current_user: dict = Depends(require_role("receptionist", "nurse", "doctor", "hospital_admin", "super_admin")),
 ):
+    """Internal status transitions used by nurse/doctor flows to mark completed."""
     token = await session.get(QueueToken, token_id)
     if not token:
         raise HTTPException(status_code=404, detail="Token not found")
 
     token.status = payload.status
-    if payload.status == "called":
-        token.called_at = datetime.now(timezone.utc)
-    elif payload.status == "completed":
+    if payload.status == "completed":
         token.completed_at = datetime.now(timezone.utc)
 
     await session.commit()
     await session.refresh(token)
 
     patient = await session.get(Patient, token.patient_id)
+    dept = await session.get(Department, token.department_id) if token.department_id else None
+    doctor = await session.get(Doctor, token.doctor_id) if token.doctor_id else None
+
     tenant = current_user.get("tenant_schema", "public")
     await ws_manager.broadcast(tenant, "queue:update", {
         "event": "token_updated",
@@ -181,97 +290,6 @@ async def update_token_status(
     if patient:
         result.patient_name = f"{patient.first_name} {patient.last_name}"
         result.patient_phone = patient.phone
-    return result
-
-
-@router.post("/{token_id}/checkin", response_model=QueueTokenRead)
-async def checkin_walkin(
-    token_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("receptionist", "nurse", "hospital_admin", "super_admin")),
-):
-    """
-    Check-in a walk-in queue token:
-    1. Token status → 'called'
-    2. Create a Visit(status='registered') linked to this token's patient + department
-    3. Broadcast visit:update so NurseVitalsPage picks it up in real-time
-    """
-    token = await session.get(QueueToken, token_id)
-    if not token:
-        raise HTTPException(status_code=404, detail="Token not found")
-    if token.status not in ("waiting", "called"):
-        raise HTTPException(status_code=400, detail=f"Cannot check-in token with status '{token.status}'")
-
-    # Idempotent: if visit already created for this token, don't duplicate
-    existing_visit = (await session.execute(
-        select(Visit).where(Visit.appointment_id == None, Visit.patient_id == token.patient_id, Visit.status != "closed")  # noqa: E711
-    )).scalars().all()
-    # More precise: check via token link stored on token itself (we store visit_id on token if available)
-    # Since we don't have a direct FK, match by patient + department + same day
-    from datetime import date as _date
-    today_start = datetime.combine(_date.today(), datetime.min.time()).replace(tzinfo=timezone.utc)
-    dup = (await session.execute(
-        select(Visit).where(
-            Visit.patient_id == token.patient_id,
-            Visit.department_id == token.department_id,
-            Visit.created_at >= today_start,
-            Visit.status != "closed",
-        )
-    )).scalar_one_or_none()
-    if dup:
-        # Already checked in — just update token status
-        token.status = "called"
-        token.called_at = datetime.now(timezone.utc)
-        await session.commit()
-        await session.refresh(token)
-        patient = await session.get(Patient, token.patient_id)
-        result = QueueTokenRead.model_validate(token)
-        if patient:
-            result.patient_name = f"{patient.first_name} {patient.last_name}"
-            result.patient_phone = patient.phone
-        return result
-
-    # Mark token called
-    token.status = "called"
-    token.called_at = datetime.now(timezone.utc)
-
-    # Create Visit (doctor_id comes from the pre-selected doctor on the token)
-    visit = Visit(
-        id=uuid.uuid4(),
-        patient_id=token.patient_id,
-        doctor_id=token.doctor_id,
-        appointment_id=None,
-        department_id=token.department_id,
-        status="registered",
-    )
-    session.add(visit)
-    await session.commit()
-    await session.refresh(token)
-    await session.refresh(visit)
-
-    patient = await session.get(Patient, token.patient_id)
-    tenant = current_user.get("tenant_schema", "public")
-
-    # Broadcast token status change
-    await ws_manager.broadcast(tenant, "queue:update", {
-        "event": "token_updated",
-        "token_id": str(token.id),
-        "token_no": token.token_no,
-        "status": token.status,
-    })
-    # Broadcast new visit → NurseVitalsPage picks it up immediately
-    await ws_manager.broadcast(tenant, "visit:update", {
-        "event": "visit_registered",
-        "visit_id": str(visit.id),
-        "patient_id": str(visit.patient_id),
-        "department_id": str(visit.department_id) if visit.department_id else None,
-    })
-
-    result = QueueTokenRead.model_validate(token)
-    if patient:
-        result.patient_name = f"{patient.first_name} {patient.last_name}"
-        result.patient_phone = patient.phone
-    if token.department_id:
-        dept = await session.get(Department, token.department_id)
-        result.department_name = dept.name if dept else None
+    result.department_name = dept.name if dept else None
+    result.doctor_name = doctor.full_name if doctor else None
     return result

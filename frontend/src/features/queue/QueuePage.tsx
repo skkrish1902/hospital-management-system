@@ -1,19 +1,10 @@
 import { useState, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { queueService } from '@/services/queueService'
 import { patientService } from '@/services/patientService'
 import { departmentService, doctorService } from '@/services/clinicalService'
-import type { Doctor, Patient, QueueType } from '@/types/common'
-
-const QUEUE_TYPES: { value: QueueType; label: string; color: string }[] = [
-  { value: 'registration', label: 'Registration', color: 'blue' },
-  { value: 'vitals', label: 'Vitals', color: 'purple' },
-  { value: 'consultation', label: 'Consultation', color: 'green' },
-  { value: 'pharmacy', label: 'Pharmacy', color: 'orange' },
-  { value: 'billing', label: 'Billing', color: 'yellow' },
-]
+import type { Doctor, Patient, QueueToken } from '@/types/common'
 
 const PRIORITY_BADGE: Record<string, string> = {
   emergency: 'bg-red-100 text-red-700',
@@ -22,17 +13,12 @@ const PRIORITY_BADGE: Record<string, string> = {
 }
 
 const STATUS_BADGE: Record<string, string> = {
-  waiting: 'bg-blue-50 text-blue-700',
-  called: 'bg-amber-50 text-amber-700',
-  in_progress: 'bg-purple-50 text-purple-700',
+  checked_in: 'bg-blue-50 text-blue-700',
   completed: 'bg-green-50 text-green-700',
-  skipped: 'bg-gray-50 text-gray-500',
+  cancelled: 'bg-red-50 text-red-600',
 }
 
 export default function QueuePage() {
-  const [searchParams] = useSearchParams()
-  const initialTab = (searchParams.get('tab') as QueueType) ?? 'registration'
-  const [activeTab, setActiveTab] = useState<QueueType>(initialTab)
   const [issueForm, setIssueForm] = useState(false)
   const [patientSearch, setPatientSearch] = useState('')
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
@@ -40,6 +26,18 @@ export default function QueuePage() {
   const [selectedDeptId, setSelectedDeptId] = useState<string>('')
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>('')
   const [filterDeptId, setFilterDeptId] = useState<string>('')
+
+  // Edit modal
+  const [editToken, setEditToken] = useState<QueueToken | null>(null)
+  const [editDeptId, setEditDeptId] = useState<string>('')
+  const [editDoctorId, setEditDoctorId] = useState<string>('')
+  const [editPriority, setEditPriority] = useState<string>('')
+
+  // Cancel modal
+  const [cancelToken, setCancelToken] = useState<QueueToken | null>(null)
+  const [cancelStep, setCancelStep] = useState<'confirm' | 'notes'>('confirm')
+  const [cancelNotes, setCancelNotes] = useState<string>('')
+
   const qc = useQueryClient()
 
   const { data: departments = [] } = useQuery<{ id: string; name: string }[]>({
@@ -47,9 +45,9 @@ export default function QueuePage() {
     queryFn: () => departmentService.list(),
   })
 
-  const { data: tokens = [], refetch } = useQuery({
-    queryKey: ['queue', activeTab, filterDeptId],
-    queryFn: () => queueService.list({ queue_type: activeTab, department_id: filterDeptId || undefined }),
+  const { data: tokens = [], refetch } = useQuery<QueueToken[]>({
+    queryKey: ['queue', filterDeptId],
+    queryFn: () => queueService.list({ department_id: filterDeptId || undefined }),
     refetchInterval: 30_000,
   })
 
@@ -67,43 +65,70 @@ export default function QueuePage() {
     staleTime: 30_000,
   })
 
-  // Real-time updates
-  useWebSocket('queue:update', useCallback(() => {
-    refetch()
-  }, [refetch]))
+  const { data: editDeptDoctors = [] } = useQuery<Doctor[]>({
+    queryKey: ['doctors', 'by-dept', editDeptId],
+    queryFn: () => doctorService.list({ department_id: editDeptId }),
+    enabled: !!editDeptId,
+    staleTime: 30_000,
+  })
+
+  useWebSocket('queue:update', useCallback(() => { refetch() }, [refetch]))
+
+  const closeIssue = () => {
+    setIssueForm(false)
+    setSelectedPatient(null)
+    setPatientSearch('')
+    setPriority('normal')
+    setSelectedDeptId('')
+    setSelectedDoctorId('')
+  }
 
   const { mutate: issueToken, isPending: issuing } = useMutation({
     mutationFn: () => queueService.issue({
       patient_id: selectedPatient!.id,
-      queue_type: activeTab,
+      queue_type: 'consultation',
       department_id: selectedDeptId || undefined,
       doctor_id: selectedDoctorId || undefined,
       priority,
     }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['queue'] }); closeIssue() },
+  })
+
+  const { mutate: editMut, isPending: editing } = useMutation({
+    mutationFn: () => queueService.edit(editToken!.id, {
+      department_id: editDeptId || undefined,
+      doctor_id: editDoctorId || undefined,
+      priority: editPriority || undefined,
+    }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['queue'] }); setEditToken(null) },
+  })
+
+  const { mutate: cancelMut, isPending: cancelling } = useMutation({
+    mutationFn: () => queueService.cancel(cancelToken!.id, cancelNotes),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['queue'] })
-      setIssueForm(false)
-      setSelectedPatient(null)
-      setPatientSearch('')
-      setPriority('normal')
-      setSelectedDeptId('')
-      setSelectedDoctorId('')
+      setCancelToken(null)
+      setCancelStep('confirm')
+      setCancelNotes('')
     },
   })
 
-  const { mutate: updateStatus } = useMutation({
-    mutationFn: ({ tokenId, status }: { tokenId: string; status: string }) =>
-      queueService.updateStatus(tokenId, status),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['queue'] }),
-  })
+  const checkedIn = tokens.filter(t => t.status === 'checked_in').length
+  const completed = tokens.filter(t => t.status === 'completed').length
+  const cancelled = tokens.filter(t => t.status === 'cancelled').length
 
-  const { mutate: checkIn } = useMutation({
-    mutationFn: (tokenId: string) => queueService.checkIn(tokenId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['queue'] }),
-  })
+  const openEdit = (token: QueueToken) => {
+    setEditToken(token)
+    setEditDeptId(token.department_id ?? '')
+    setEditDoctorId(token.doctor_id ?? '')
+    setEditPriority(token.priority)
+  }
 
-  const waitingCount = tokens.filter(t => t.status === 'waiting').length
-  const calledToken = tokens.find(t => t.status === 'called' || t.status === 'in_progress')
+  const openCancel = (token: QueueToken) => {
+    setCancelToken(token)
+    setCancelStep('confirm')
+    setCancelNotes('')
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -140,28 +165,11 @@ export default function QueuePage() {
         </div>
       )}
 
-      {/* Stats bar */}
+      {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
-        <StatCard label="Waiting" value={waitingCount} color="blue" />
-        <StatCard label="Now Serving" value={calledToken?.token_no ?? '—'} color="green" />
-        <StatCard label="Total Today" value={tokens.length} color="gray" />
-      </div>
-
-      {/* Queue type tabs */}
-      <div className="flex gap-1 bg-gray-100 p-1 rounded-lg w-fit">
-        {QUEUE_TYPES.map(tab => (
-          <button
-            key={tab.value}
-            onClick={() => setActiveTab(tab.value)}
-            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-              activeTab === tab.value
-                ? 'bg-white shadow-sm text-gray-900'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+        <StatCard label="Checked In" value={checkedIn} color="blue" />
+        <StatCard label="Completed" value={completed} color="green" />
+        <StatCard label="Cancelled" value={cancelled} color="red" />
       </div>
 
       {/* Token table */}
@@ -177,10 +185,13 @@ export default function QueuePage() {
           <tbody className="divide-y divide-gray-100">
             {tokens.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-gray-400">Queue is empty</td>
+                <td colSpan={9} className="px-4 py-10 text-center text-gray-400">Queue is empty</td>
               </tr>
-            ) : tokens.map((token: any) => (
-              <tr key={token.id} className="hover:bg-gray-50">
+            ) : tokens.map((token) => (
+              <tr
+                key={token.id}
+                className={`hover:bg-gray-50 ${token.status === 'cancelled' ? 'opacity-60' : ''}`}
+              >
                 <td className="px-4 py-3">
                   <span className="text-2xl font-bold text-primary tabular-nums">{token.token_no}</span>
                 </td>
@@ -194,31 +205,44 @@ export default function QueuePage() {
                 <td className="px-4 py-3 text-gray-500 text-xs">{token.department_name || '—'}</td>
                 <td className="px-4 py-3 text-gray-500 text-xs">{token.doctor_name || '—'}</td>
                 <td className="px-4 py-3">
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_BADGE[token.status] || ''}`}>
+                  <span
+                    title={token.status === 'cancelled' && token.notes ? `Reason: ${token.notes}` : undefined}
+                    className={`px-2 py-0.5 rounded-full text-xs font-medium cursor-default ${STATUS_BADGE[token.status] || 'bg-gray-100 text-gray-600'}`}
+                  >
                     {token.status.replace('_', ' ')}
+                    {token.status === 'cancelled' && token.notes && (
+                      <span className="ml-1 text-red-400">ⓘ</span>
+                    )}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-gray-400 text-xs">
                   {new Date(token.issued_at).toLocaleTimeString()}
                 </td>
                 <td className="px-4 py-3">
-                  <div className="flex gap-2">
-                    {token.status === 'waiting' && (
-                      <>
-                        <ActionBtn onClick={() => checkIn(token.id)} label="Check-in" color="green" />
-                        <ActionBtn onClick={() => updateStatus({ tokenId: token.id, status: 'called' })} label="Call" color="blue" />
-                      </>
-                    )}
-                    {token.status === 'called' && (
-                      <>
-                        <ActionBtn onClick={() => updateStatus({ tokenId: token.id, status: 'in_progress' })} label="Start" color="green" />
-                        <ActionBtn onClick={() => updateStatus({ tokenId: token.id, status: 'skipped' })} label="Skip" color="gray" />
-                      </>
-                    )}
-                    {token.status === 'in_progress' && (
-                      <ActionBtn onClick={() => updateStatus({ tokenId: token.id, status: 'completed' })} label="Done" color="green" />
-                    )}
-                  </div>
+                  {token.status === 'checked_in' && (
+                    <div className="flex items-center gap-2">
+                      {/* Edit icon */}
+                      <button
+                        onClick={() => openEdit(token)}
+                        title="Edit token"
+                        className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                      {/* Cancel icon */}
+                      <button
+                        onClick={() => openCancel(token)}
+                        title="Cancel visit"
+                        className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}
@@ -226,20 +250,19 @@ export default function QueuePage() {
         </table>
       </div>
 
-      {/* Issue token modal */}
+      {/* Issue Token Modal */}
       {issueForm && (
-        <div className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center p-4" onClick={() => { setIssueForm(false); setSelectedDoctorId(''); setSelectedDeptId('') }}>
+        <div className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center p-4" onClick={closeIssue}>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-gray-100 flex items-center justify-between">
               <h2 className="font-semibold text-gray-900">Issue Queue Token</h2>
-              <button onClick={() => { setIssueForm(false); setSelectedDoctorId(''); setSelectedDeptId('') }} className="text-gray-400 hover:text-gray-700">
+              <button onClick={closeIssue} className="text-gray-400 hover:text-gray-700">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
             <div className="p-5 space-y-4">
-              {/* Patient search */}
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Search Patient</label>
                 <input
@@ -250,7 +273,6 @@ export default function QueuePage() {
                 />
               </div>
 
-              {/* Patient results */}
               {patientSearch && patients.length > 0 && (
                 <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-40 overflow-y-auto">
                   {patients.map((p: Patient) => (
@@ -267,66 +289,53 @@ export default function QueuePage() {
               )}
 
               {selectedPatient && (
-                <div className="bg-blue-50 rounded-lg px-3 py-2 text-sm">
-                  <span className="font-medium">{selectedPatient.first_name} {selectedPatient.last_name}</span>
-                  <span className="text-xs text-blue-600 ml-2">{selectedPatient.uhid}</span>
+                <div className="bg-blue-50 rounded-lg px-3 py-2 text-sm flex items-center justify-between">
+                  <span>
+                    <span className="font-medium">{selectedPatient.first_name} {selectedPatient.last_name}</span>
+                    <span className="text-xs text-blue-600 ml-2">{selectedPatient.uhid}</span>
+                  </span>
+                  <button onClick={() => setSelectedPatient(null)} className="text-blue-400 hover:text-blue-700 text-xs">✕</button>
                 </div>
               )}
 
-              {/* Priority */}
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Priority</label>
-                <select
-                  value={priority}
-                  onChange={e => setPriority(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                >
+                <select value={priority} onChange={e => setPriority(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
                   <option value="normal">Normal</option>
                   <option value="senior_citizen">Senior Citizen</option>
                   <option value="emergency">Emergency</option>
                 </select>
               </div>
 
-              {/* Department */}
               {departments.length > 0 && (
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Department</label>
-                  <select
-                    value={selectedDeptId}
-                    onChange={e => { setSelectedDeptId(e.target.value); setSelectedDoctorId('') }}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  >
+                  <select value={selectedDeptId} onChange={e => { setSelectedDeptId(e.target.value); setSelectedDoctorId('') }}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
                     <option value="">— Select department —</option>
-                    {departments.map(d => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
+                    {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                   </select>
                 </div>
               )}
 
-              {/* Doctor — shown once a department is selected */}
               {selectedDeptId && (
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Doctor</label>
                   {deptDoctors.length === 0 ? (
                     <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">No doctors found for this department</p>
                   ) : (
-                    <select
-                      value={selectedDoctorId}
-                      onChange={e => setSelectedDoctorId(e.target.value)}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    >
+                    <select value={selectedDoctorId} onChange={e => setSelectedDoctorId(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
                       <option value="">— Select doctor —</option>
-                      {deptDoctors.map((d: Doctor) => (
-                        <option key={d.id} value={d.id}>{d.full_name}</option>
-                      ))}
+                      {deptDoctors.map((d: Doctor) => <option key={d.id} value={d.id}>{d.full_name}</option>)}
                     </select>
                   )}
                 </div>
               )}
 
               <div className="flex gap-3 pt-1">
-                <button onClick={() => { setIssueForm(false); setSelectedDoctorId(''); setSelectedDeptId('') }}
+                <button onClick={closeIssue}
                   className="flex-1 border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-50">
                   Cancel
                 </button>
@@ -342,6 +351,147 @@ export default function QueuePage() {
           </div>
         </div>
       )}
+
+      {/* Edit Token Modal */}
+      {editToken && (
+        <div className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center p-4" onClick={() => setEditToken(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+              <h2 className="font-semibold text-gray-900">Edit Token #{editToken.token_no}</h2>
+              <button onClick={() => setEditToken(null)} className="text-gray-400 hover:text-gray-700">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Priority</label>
+                <select value={editPriority} onChange={e => setEditPriority(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
+                  <option value="normal">Normal</option>
+                  <option value="senior_citizen">Senior Citizen</option>
+                  <option value="emergency">Emergency</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Department</label>
+                <select value={editDeptId} onChange={e => { setEditDeptId(e.target.value); setEditDoctorId('') }}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
+                  <option value="">— No change —</option>
+                  {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </div>
+              {editDeptId && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Doctor</label>
+                  {editDeptDoctors.length === 0 ? (
+                    <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">No doctors found for this department</p>
+                  ) : (
+                    <select value={editDoctorId} onChange={e => setEditDoctorId(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
+                      <option value="">— No change —</option>
+                      {editDeptDoctors.map((d: Doctor) => <option key={d.id} value={d.id}>{d.full_name}</option>)}
+                    </select>
+                  )}
+                </div>
+              )}
+              <div className="flex gap-3 pt-1">
+                <button onClick={() => setEditToken(null)}
+                  className="flex-1 border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-50">
+                  Cancel
+                </button>
+                <button
+                  disabled={editing}
+                  onClick={() => editMut()}
+                  className="flex-1 bg-primary text-white py-2.5 rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {editing ? 'Saving…' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel Confirmation Modal */}
+      {cancelToken && (
+        <div className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center p-4" onClick={() => { setCancelToken(null); setCancelStep('confirm'); setCancelNotes('') }}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
+            {cancelStep === 'confirm' ? (
+              <>
+                <div className="p-5 space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                      <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-gray-900">Cancel Visit?</h3>
+                      <p className="text-sm text-gray-500">Token #{cancelToken.token_no} — {cancelToken.patient_name}</p>
+                    </div>
+                  </div>
+                  <p className="text-sm text-gray-600">Do you want to cancel this visit? This action cannot be undone.</p>
+                </div>
+                <div className="px-5 pb-5 flex gap-3">
+                  <button
+                    onClick={() => { setCancelToken(null); setCancelStep('confirm'); setCancelNotes('') }}
+                    className="flex-1 border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-50"
+                  >
+                    No, keep it
+                  </button>
+                  <button
+                    onClick={() => setCancelStep('notes')}
+                    className="flex-1 bg-red-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-red-700"
+                  >
+                    Yes, cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+                  <h3 className="font-semibold text-gray-900">Reason for Cancellation</h3>
+                  <button onClick={() => setCancelStep('confirm')} className="text-gray-400 hover:text-gray-700 text-xs">← Back</button>
+                </div>
+                <div className="p-5 space-y-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                      Notes <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                      value={cancelNotes}
+                      onChange={e => setCancelNotes(e.target.value)}
+                      rows={3}
+                      placeholder="Enter reason for cancellation…"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-300 focus:border-red-400 resize-none"
+                    />
+                    {cancelNotes.trim() === '' && (
+                      <p className="text-xs text-red-500 mt-1">Notes are required to cancel a visit</p>
+                    )}
+                  </div>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => { setCancelToken(null); setCancelStep('confirm'); setCancelNotes('') }}
+                      className="flex-1 border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-50"
+                    >
+                      Discard
+                    </button>
+                    <button
+                      disabled={cancelNotes.trim() === '' || cancelling}
+                      onClick={() => cancelMut()}
+                      className="flex-1 bg-red-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {cancelling ? 'Cancelling…' : 'Confirm Cancel'}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -350,6 +500,7 @@ function StatCard({ label, value, color }: { label: string; value: number | stri
   const colorMap: Record<string, string> = {
     blue: 'bg-blue-50 text-blue-700',
     green: 'bg-green-50 text-green-700',
+    red: 'bg-red-50 text-red-700',
     gray: 'bg-gray-50 text-gray-700',
   }
   return (
@@ -357,18 +508,5 @@ function StatCard({ label, value, color }: { label: string; value: number | stri
       <p className="text-xs text-gray-500 mb-1">{label}</p>
       <p className={`text-3xl font-bold ${colorMap[color] || ''} rounded-lg px-2 py-0.5 inline-block`}>{value}</p>
     </div>
-  )
-}
-
-function ActionBtn({ onClick, label, color }: { onClick: () => void; label: string; color: string }) {
-  const cls: Record<string, string> = {
-    blue: 'text-blue-600 hover:bg-blue-50',
-    green: 'text-green-600 hover:bg-green-50',
-    gray: 'text-gray-500 hover:bg-gray-100',
-  }
-  return (
-    <button onClick={onClick} className={`px-2 py-1 rounded text-xs font-medium transition-colors ${cls[color] || ''}`}>
-      {label}
-    </button>
   )
 }

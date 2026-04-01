@@ -22,7 +22,7 @@ export type QueueType = 'registration' | 'vitals' | 'consultation' | 'pharmacy' 
 
 export type QueuePriority = 'emergency' | 'senior_citizen' | 'normal'
 
-export type QueueStatus = 'waiting' | 'called' | 'in_progress' | 'completed' | 'skipped'
+export type QueueStatus = 'waiting' | 'called' | 'in_progress' | 'completed' | 'skipped' | 'checked_in' | 'cancelled'
 
 export type VisitStatus =
   | 'registered'
@@ -105,9 +105,11 @@ export interface QueueToken {
   queue_type: QueueType
   priority: QueuePriority
   status: QueueStatus
+  notes?: string
   issued_at: string
   called_at?: string
   completed_at?: string
+  cancelled_at?: string
   patient?: Patient
   patient_name?: string
   patient_phone?: string

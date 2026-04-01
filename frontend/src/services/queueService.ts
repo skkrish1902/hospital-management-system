@@ -10,12 +10,24 @@ export interface QueueTokenCreate {
   priority?: string
 }
 
+export interface QueueTokenUpdate {
+  department_id?: string
+  doctor_id?: string
+  priority?: string
+}
+
 export const queueService = {
   list: (params?: { queue_type?: string; department_id?: string; status?: string }) =>
     apiClient.get<QueueToken[]>('/queue', { params }).then(r => r.data),
 
   issue: (data: QueueTokenCreate) =>
     apiClient.post<QueueToken>('/queue', data).then(r => r.data),
+
+  edit: (tokenId: string, data: QueueTokenUpdate) =>
+    apiClient.patch<QueueToken>(`/queue/${tokenId}`, data).then(r => r.data),
+
+  cancel: (tokenId: string, notes: string) =>
+    apiClient.post<QueueToken>(`/queue/${tokenId}/cancel`, { notes }).then(r => r.data),
 
   updateStatus: (tokenId: string, status: string) =>
     apiClient.patch<QueueToken>(`/queue/${tokenId}/status`, { status }).then(r => r.data),
