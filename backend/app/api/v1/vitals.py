@@ -34,9 +34,9 @@ async def record_vitals(
     )
     session.add(vitals)
 
-    # Advance visit status to vitals_done if still registered
+    # Advance to vitals_recorded; nurse will explicitly send to doctor queue when ready
     if visit.status == "registered":
-        visit.status = "vitals_done"
+        visit.status = "vitals_recorded"
 
     await session.commit()
     await session.refresh(vitals)

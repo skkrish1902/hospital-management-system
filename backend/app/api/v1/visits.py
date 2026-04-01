@@ -25,12 +25,13 @@ from app.websocket.manager import ws_manager
 router = APIRouter()
 
 _VALID_TRANSITIONS = {
-    "registered": {"vitals_done"},
+    "registered": {"vitals_recorded"},
+    "vitals_recorded": {"vitals_done"},
     "vitals_done": {"in_consultation"},
     "in_consultation": {"prescription_done"},
-    "prescription_done": {"dispatched_pharmacy", "dispatched_lab", "billing_pending"},
-    "dispatched_pharmacy": {"billing_pending"},
-    "dispatched_lab": {"closed"},
+    "prescription_done": {"dispatched_pharmacy", "dispatched_lab", "billing_pending", "closed"},
+    "dispatched_pharmacy": {"dispatched_lab", "billing_pending", "closed"},
+    "dispatched_lab": {"dispatched_pharmacy", "billing_pending", "closed"},
     "billing_pending": {"closed"},
     "closed": set(),
 }
@@ -194,39 +195,45 @@ async def dispatch_visit(
 ):
     """
     Nurse dispatch after prescription_done:
-      - billing   → visit → billing_pending (no pharmacy/lab)
-      - pharmacy  → create PharmacyQueue + visit → dispatched_pharmacy
-      - lab       → activate LabOrder + visit → dispatched_lab → closed
+      - close    → visit → closed (hand prescription to patient, no extra billing)
+      - billing  → visit → billing_pending (additional charges needed)
+      - pharmacy → create PharmacyQueue + visit → dispatched_pharmacy
+      - lab      → activate LabOrder + visit → dispatched_lab
+    pharmacy and lab are independent — both can be dispatched for the same visit.
     """
     visit = await session.get(Visit, visit_id)
     if not visit:
         raise HTTPException(status_code=404, detail="Visit not found")
-    if visit.status != "prescription_done":
+
+    _DISPATCH_ALLOWED = {"prescription_done", "dispatched_pharmacy", "dispatched_lab"}
+    if visit.status not in _DISPATCH_ALLOWED:
         raise HTTPException(
             status_code=400,
-            detail=f"Dispatch only allowed from prescription_done (current: {visit.status})",
+            detail=f"Dispatch only allowed from prescription/dispatch states (current: {visit.status})",
         )
 
-    if payload.action == "billing":
+    if payload.action == "close":
+        visit.status = "closed"
+        visit.closed_at = datetime.now(timezone.utc)
+
+    elif payload.action == "billing":
         visit.status = "billing_pending"
 
     elif payload.action == "pharmacy":
-        # Find the prescription for this visit
         rx = (await session.execute(
             select(Prescription).where(Prescription.visit_id == visit_id)
         )).scalar_one_or_none()
         if not rx:
             raise HTTPException(status_code=400, detail="No prescription found for this visit")
-        pq = PharmacyQueue(
-            id=uuid.uuid4(),
-            prescription_id=rx.id,
-            status="pending",
-        )
-        session.add(pq)
+        # Idempotent: only create if no PharmacyQueue exists yet
+        existing_pq = (await session.execute(
+            select(PharmacyQueue).where(PharmacyQueue.prescription_id == rx.id)
+        )).scalar_one_or_none()
+        if not existing_pq:
+            session.add(PharmacyQueue(id=uuid.uuid4(), prescription_id=rx.id, status="pending"))
         visit.status = "dispatched_pharmacy"
 
     elif payload.action == "lab":
-        # Activate the lab order (doctor should have already created it via prescriptions API)
         lab_order = (await session.execute(
             select(LabOrder).where(LabOrder.visit_id == visit_id)
         )).scalar_one_or_none()
@@ -234,9 +241,7 @@ async def dispatch_visit(
             raise HTTPException(status_code=400, detail="No lab order found for this visit — doctor must add lab tests first")
         lab_order.status = "sample_collected"
         visit.status = "dispatched_lab"
-        # Lab dispatch closes the current visit; patient comes back with results
-        visit.closed_at = datetime.now(timezone.utc)
-        visit.status = "closed"
+        # No auto-close: nurse decides when to close the visit
 
     await session.commit()
     await session.refresh(visit)
@@ -248,10 +253,11 @@ async def dispatch_visit(
         "action": payload.action,
         "status": visit.status,
     })
-    await ws_manager.broadcast(tenant, "pharmacy:update" if payload.action == "pharmacy" else "visit:update", {
-        "event": "pharmacy_queue_created" if payload.action == "pharmacy" else "lab_dispatched",
-        "visit_id": str(visit.id),
-    })
+    if payload.action == "pharmacy":
+        await ws_manager.broadcast(tenant, "pharmacy:update", {
+            "event": "pharmacy_queue_created",
+            "visit_id": str(visit.id),
+        })
 
     patient = await session.get(Patient, visit.patient_id)
     doctor = await session.get(Doctor, visit.doctor_id) if visit.doctor_id else None
@@ -260,4 +266,5 @@ async def dispatch_visit(
     result.patient_name = f"{patient.first_name} {patient.last_name}" if patient else None
     result.doctor_name = doctor.full_name if doctor else None
     result.department_name = dept.name if dept else None
+    result.doctor_consultation_fee = float(doctor.consultation_fee) if doctor else None
     return result

@@ -37,7 +37,9 @@ class VisitStatusUpdate(BaseModel):
 
 class VisitDispatch(BaseModel):
     """Nurse dispatch action after prescription_done."""
-    action: Literal["billing", "pharmacy", "lab"]
-    # billing   = patient leaves, no hospital pharmacy/lab needed → visit → billing_pending
-    # pharmacy  = send to hospital pharmacy → creates PharmacyQueue + visit → billing_pending
-    # lab       = send to lab → creates LabOrder activation + visit → closed (patient comes back)
+    action: Literal["close", "billing", "pharmacy", "lab"]
+    # close    = hand prescription to patient, close visit (no extra billing)
+    # billing  = send to billing for additional charges → billing_pending
+    # pharmacy = send to hospital pharmacy → creates PharmacyQueue → dispatched_pharmacy
+    # lab      = send to lab → activates LabOrder → dispatched_lab
+    # pharmacy and lab are independent — both can be dispatched for the same visit

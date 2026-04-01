@@ -42,7 +42,7 @@ export const visitService = {
   updateStatus: (id: string, status: string) =>
     apiClient.patch<Visit>(`/visits/${id}/status`, { status }).then(r => r.data),
 
-  dispatch: (id: string, action: 'billing' | 'pharmacy' | 'lab') =>
+  dispatch: (id: string, action: 'close' | 'billing' | 'pharmacy' | 'lab') =>
     apiClient.post<Visit>(`/visits/${id}/dispatch`, { action }).then(r => r.data),
 }
 

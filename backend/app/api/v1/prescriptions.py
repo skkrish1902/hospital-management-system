@@ -56,13 +56,17 @@ async def create_prescription(
     await session.commit()
     await session.refresh(prescription)
 
-    # Notify pharmacy
+    # Notify pharmacy and nurse dispatch queue
     tenant = current_user.get("tenant_schema", "public")
     await ws_manager.broadcast(tenant, "pharmacy:update", {
         "event": "prescription_created",
         "prescription_id": str(prescription.id),
         "visit_id": str(prescription.visit_id),
         "has_lab_tests": bool(payload.lab_tests),
+    })
+    await ws_manager.broadcast(tenant, "visit:update", {
+        "event": "prescription_saved",
+        "visit_id": str(prescription.visit_id),
     })
 
     return prescription

@@ -40,6 +40,13 @@ export default function ConsultationPage() {
     refetchInterval: 30_000,
   })
 
+  // Count of patients still being prepared by nurse (vitals_recorded → not yet sent to doctor)
+  const { data: preparingVisits = [] } = useQuery({
+    queryKey: ['visits', 'vitals_recorded'],
+    queryFn: () => visitService.list({ status: 'vitals_recorded' }),
+    refetchInterval: 30_000,
+  })
+
   useWebSocket('visit:update', useCallback(() => refetch(), [refetch]))
 
   const {
@@ -86,7 +93,21 @@ export default function ConsultationPage() {
     <div className="p-6 space-y-6 flex gap-6">
       {/* Left: patient queue */}
       <div className="w-72 shrink-0 space-y-3">
-        <h2 className="text-sm font-semibold text-gray-700">Patients for Consultation</h2>
+        <div>
+          <h2 className="text-sm font-semibold text-gray-700">
+            Patients for Consultation
+            {visits.length > 0 && (
+              <span className="ml-1.5 text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded-full font-medium">
+                {visits.length}
+              </span>
+            )}
+          </h2>
+          {preparingVisits.length > 0 && (
+            <p className="text-xs text-amber-600 mt-0.5">
+              ⏳ {preparingVisits.length} patient{preparingVisits.length > 1 ? 's' : ''} being prepared by nurse
+            </p>
+          )}
+        </div>
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div className="divide-y divide-gray-100">
             {visits.length === 0 ? (

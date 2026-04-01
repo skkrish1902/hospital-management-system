@@ -26,6 +26,7 @@ export type QueueStatus = 'waiting' | 'called' | 'in_progress' | 'completed' | '
 
 export type VisitStatus =
   | 'registered'
+  | 'vitals_recorded'
   | 'vitals_done'
   | 'in_consultation'
   | 'prescription_done'

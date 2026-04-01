@@ -108,9 +108,9 @@ export default function BillingPage() {
           {visit && <p className="text-sm text-gray-500 mt-0.5">Patient: <strong>{visit.patient_name}</strong></p>}
         </div>
         {step === 'paid' && (
-          <button onClick={() => navigate(returnTo === 'queue' ? '/queue' : '/billing')}
+          <button onClick={() => navigate(returnTo === 'queue' ? '/queue' : returnTo === 'nurse' ? '/nurse' : '/billing')}
             className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700">
-            {returnTo === 'queue' ? 'Back to Queue' : 'New Billing'}
+            {returnTo === 'queue' ? 'Back to Queue' : returnTo === 'nurse' ? 'Back to Nurse Station' : 'New Billing'}
           </button>
         )}
       </div>
@@ -130,6 +130,8 @@ export default function BillingPage() {
           <p className="text-xs text-green-600">
             {returnTo === 'queue'
               ? 'Patient added to nurse queue.'
+              : returnTo === 'nurse'
+              ? 'Additional charges billed.'
               : 'Visit closed. Patient discharge complete.'}
           </p>
         </div>
