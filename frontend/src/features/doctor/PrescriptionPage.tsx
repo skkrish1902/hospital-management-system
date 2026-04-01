@@ -69,7 +69,7 @@ export default function PrescriptionPage() {
       instructions: data.instructions,
       lab_tests: data.lab_tests?.length ? data.lab_tests : undefined,
     }),
-    onSuccess: () => navigate(`/billing?visitId=${visitId}`),
+    onSuccess: () => navigate('/doctor'),
   })
 
   return (
@@ -244,15 +244,8 @@ export default function PrescriptionPage() {
             Back
           </button>
           <button type="submit" disabled={isPending}
-            className="bg-primary text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60 flex items-center gap-2">
-            {isPending ? 'Saving…' : (
-              <>
-                Save Prescription & Proceed to Billing
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-              </>
-            )}
+            className="bg-primary text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
+            {isPending ? 'Saving…' : 'Save Prescription'}
           </button>
         </div>
       </form>
