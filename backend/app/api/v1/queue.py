@@ -227,9 +227,25 @@ async def cancel_token(
     if not payload.notes or not payload.notes.strip():
         raise HTTPException(status_code=422, detail="Cancellation notes are required")
 
+    now = datetime.now(timezone.utc)
     token.status = "cancelled"
     token.notes = payload.notes.strip()
-    token.cancelled_at = datetime.now(timezone.utc)
+    token.cancelled_at = now
+
+    # Cancel the associated Visit (registered status only — not yet seen by nurse/doctor)
+    visit_stmt = select(Visit).where(
+        Visit.patient_id == token.patient_id,
+        Visit.status == "registered",
+    )
+    if token.appointment_id:
+        visit_stmt = visit_stmt.where(Visit.appointment_id == token.appointment_id)
+    elif token.department_id:
+        visit_stmt = visit_stmt.where(Visit.department_id == token.department_id)
+    visit_result = await session.execute(visit_stmt)
+    visit = visit_result.scalars().first()
+    if visit:
+        visit.status = "cancelled"
+        visit.closed_at = now
 
     await session.commit()
     await session.refresh(token)

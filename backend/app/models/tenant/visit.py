@@ -17,5 +17,5 @@ class Visit(Base, TimestampMixin):
     appointment_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("appointments.id"))
     department_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("departments.id"), index=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="registered")
-    # status: registered | vitals_done | in_consultation | prescription_done | dispatched_pharmacy | dispatched_lab | billing_pending | closed
+    # status: registered | vitals_done | in_consultation | prescription_done | dispatched_pharmacy | dispatched_lab | billing_pending | closed | cancelled
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
