@@ -29,6 +29,7 @@ interface LineItemRow {
 export default function BillingPage() {
   const [params] = useSearchParams()
   const visitId = params.get('visitId') ?? ''
+  const returnTo = params.get('returnTo') ?? ''
   const navigate = useNavigate()
   const qc = useQueryClient()
 
@@ -98,9 +99,9 @@ export default function BillingPage() {
           {visit && <p className="text-sm text-gray-500 mt-0.5">Patient: <strong>{visit.patient_name}</strong></p>}
         </div>
         {step === 'paid' && (
-          <button onClick={() => navigate('/queue')}
+          <button onClick={() => navigate(returnTo === 'queue' ? '/queue' : '/billing')}
             className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700">
-            Back to Queue
+            {returnTo === 'queue' ? 'Back to Queue' : 'New Billing'}
           </button>
         )}
       </div>
@@ -117,7 +118,11 @@ export default function BillingPage() {
           <p className="text-green-700 text-sm mb-1">
             ₹{invoice.total.toFixed(2)} paid via <span className="font-semibold capitalize">{invoice.payment_method}</span>
           </p>
-          <p className="text-xs text-green-600">Visit closed. Patient discharge complete.</p>
+          <p className="text-xs text-green-600">
+            {returnTo === 'queue'
+              ? 'Patient added to nurse queue.'
+              : 'Visit closed. Patient discharge complete.'}
+          </p>
         </div>
       )}
 

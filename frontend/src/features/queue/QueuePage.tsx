@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { queueService } from '@/services/queueService'
@@ -39,6 +40,7 @@ export default function QueuePage() {
   const [cancelNotes, setCancelNotes] = useState<string>('')
 
   const qc = useQueryClient()
+  const navigate = useNavigate()
 
   const { data: departments = [] } = useQuery<{ id: string; name: string }[]>({
     queryKey: ['departments'],
@@ -91,7 +93,13 @@ export default function QueuePage() {
       doctor_id: selectedDoctorId || undefined,
       priority,
     }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['queue'] }); closeIssue() },
+    onSuccess: (token) => {
+      qc.invalidateQueries({ queryKey: ['queue'] })
+      closeIssue()
+      if (token.visit_id) {
+        navigate(`/billing?visitId=${token.visit_id}&returnTo=queue`)
+      }
+    },
   })
 
   const { mutate: editMut, isPending: editing } = useMutation({

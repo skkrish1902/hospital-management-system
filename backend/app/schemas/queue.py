@@ -34,6 +34,7 @@ class QueueTokenRead(BaseModel):
     patient_phone: Optional[str] = None
     department_name: Optional[str] = None
     doctor_name: Optional[str] = None
+    visit_id: Optional[uuid.UUID] = None  # Set on issuance; used for upfront billing redirect
 
     model_config = {"from_attributes": True}
 

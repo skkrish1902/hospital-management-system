@@ -83,7 +83,7 @@ async def issue_token(
         doctor_id=payload.doctor_id,
         appointment_id=payload.appointment_id,
         department_id=payload.department_id,
-        status="registered",
+        status="pre_billing",
     )
     session.add(visit)
 
@@ -115,6 +115,7 @@ async def issue_token(
     result.patient_phone = patient.phone
     result.department_name = dept.name if dept else None
     result.doctor_name = doctor.full_name if doctor else None
+    result.visit_id = visit.id
     return result
 
 

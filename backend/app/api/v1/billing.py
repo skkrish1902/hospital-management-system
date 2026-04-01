@@ -23,7 +23,7 @@ router = APIRouter()
 async def list_invoices(
     visit_id: uuid.UUID | None = None,
     session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_role("billing_officer", "hospital_admin", "super_admin")),
+    _: dict = Depends(require_role("receptionist", "billing_officer", "hospital_admin", "super_admin")),
 ):
     stmt = select(Invoice).order_by(Invoice.created_at.desc())
     if visit_id:
@@ -42,7 +42,7 @@ def _compute_totals(line_items: list | None, discount: float, tax: float) -> flo
 async def create_invoice(
     payload: InvoiceCreate,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("billing_officer", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("receptionist", "billing_officer", "hospital_admin", "super_admin")),
 ):
     visit = await session.get(Visit, payload.visit_id)
     if not visit:
@@ -83,7 +83,7 @@ async def create_invoice(
 async def get_invoice_by_visit(
     visit_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_role("billing_officer", "doctor", "hospital_admin", "super_admin")),
+    _: dict = Depends(require_role("receptionist", "billing_officer", "doctor", "hospital_admin", "super_admin")),
 ):
     invoice = (await session.execute(
         select(Invoice).where(Invoice.visit_id == visit_id)
@@ -98,7 +98,7 @@ async def pay_invoice(
     invoice_id: uuid.UUID,
     payload: InvoicePayment,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("billing_officer", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("receptionist", "billing_officer", "hospital_admin", "super_admin")),
 ):
     invoice = await session.get(Invoice, invoice_id)
     if not invoice:
@@ -110,11 +110,16 @@ async def pay_invoice(
     invoice.status = "paid"
     invoice.paid_at = datetime.now(timezone.utc)
 
-    # Close the visit
+    # Transition visit based on billing type:
+    # pre_billing (upfront at reception) → registered (now visible to nurse)
+    # billing_pending (end of OPD after doctor) → closed
     visit = await session.get(Visit, invoice.visit_id)
-    if visit and visit.status == "billing_pending":
-        visit.status = "closed"
-        visit.closed_at = datetime.now(timezone.utc)
+    if visit:
+        if visit.status == "pre_billing":
+            visit.status = "registered"
+        elif visit.status == "billing_pending":
+            visit.status = "closed"
+            visit.closed_at = datetime.now(timezone.utc)
 
     await session.commit()
     await session.refresh(invoice)

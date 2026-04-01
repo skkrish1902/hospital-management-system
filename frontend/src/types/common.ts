@@ -101,6 +101,7 @@ export interface QueueToken {
   appointment_id?: UUID
   department_id?: UUID
   doctor_id?: UUID
+  visit_id?: UUID
   token_no: number
   queue_type: QueueType
   priority: QueuePriority
