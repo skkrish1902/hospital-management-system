@@ -17,6 +17,7 @@ from app.models.tenant.lab_order import LabOrder
 from app.models.tenant.patient import Patient
 from app.models.tenant.pharmacy_queue import PharmacyQueue
 from app.models.tenant.prescription import Prescription
+from app.models.tenant.nurse_department import NurseDepartment
 from app.models.tenant.visit import Visit
 from app.schemas.visit import VisitCreate, VisitDispatch, VisitRead, VisitStatusUpdate
 from app.websocket.manager import ws_manager
@@ -73,17 +74,35 @@ async def list_visits(
     department_id: Optional[uuid.UUID] = Query(None),
     open_only: bool = Query(False),
     session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_role(*ALLOWED_ROLES)),
+    current_user: dict = Depends(require_role(*ALLOWED_ROLES)),
 ):
     stmt = select(Visit)
     if patient_id:
         stmt = stmt.where(Visit.patient_id == patient_id)
     if status_filter:
         stmt = stmt.where(Visit.status == status_filter)
-    if department_id:
-        stmt = stmt.where(Visit.department_id == department_id)
     if open_only:
         stmt = stmt.where(Visit.closed_at == None)  # noqa: E711
+
+    # Nurses are restricted to only their assigned departments — enforced server-side
+    if current_user.get("role") == "nurse":
+        nurse_id = uuid.UUID(current_user["sub"])
+        nd_rows = (await session.execute(
+            select(NurseDepartment.department_id).where(NurseDepartment.user_id == nurse_id)
+        )).scalars().all()
+        assigned_dept_ids = list(nd_rows)
+        if not assigned_dept_ids:
+            return []  # Nurse has no departments assigned — show nothing
+        # If caller also passed a specific department_id, honour it only if it's in the nurse's list
+        if department_id:
+            if department_id not in assigned_dept_ids:
+                return []  # Requested dept not assigned to this nurse
+            stmt = stmt.where(Visit.department_id == department_id)
+        else:
+            stmt = stmt.where(Visit.department_id.in_(assigned_dept_ids))
+    elif department_id:
+        stmt = stmt.where(Visit.department_id == department_id)
+
     stmt = stmt.order_by(Visit.created_at.desc())
 
     rows = (await session.execute(stmt)).scalars().all()
