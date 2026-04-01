@@ -64,6 +64,7 @@ async def create_visit(
     result.patient_name = f"{patient.first_name} {patient.last_name}" if patient else None
     result.doctor_name = doctor.full_name if doctor else None
     result.department_name = dept.name if dept else None
+    result.doctor_consultation_fee = float(doctor.consultation_fee) if doctor else None
     return result
 
 
@@ -115,6 +116,7 @@ async def list_visits(
         item.patient_name = f"{patient.first_name} {patient.last_name}" if patient else None
         item.doctor_name = doctor.full_name if doctor else None
         item.department_name = dept.name if dept else None
+        item.doctor_consultation_fee = float(doctor.consultation_fee) if doctor else None
         items.append(item)
     return items
 
@@ -135,6 +137,7 @@ async def get_visit(
     result.patient_name = f"{patient.first_name} {patient.last_name}" if patient else None
     result.doctor_name = doctor.full_name if doctor else None
     result.department_name = dept.name if dept else None
+    result.doctor_consultation_fee = float(doctor.consultation_fee) if doctor else None
     return result
 
 
@@ -178,6 +181,7 @@ async def transition_visit_status(
     result.patient_name = f"{patient.first_name} {patient.last_name}" if patient else None
     result.doctor_name = doctor.full_name if doctor else None
     result.department_name = dept.name if dept else None
+    result.doctor_consultation_fee = float(doctor.consultation_fee) if doctor else None
     return result
 
 

@@ -25,6 +25,7 @@ class VisitRead(BaseModel):
     patient_name: Optional[str] = None
     doctor_name: Optional[str] = None
     department_name: Optional[str] = None
+    doctor_consultation_fee: Optional[float] = None  # pre-filled on billing page
 
     model_config = {"from_attributes": True}
 

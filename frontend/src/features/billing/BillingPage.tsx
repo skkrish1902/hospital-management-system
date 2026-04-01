@@ -7,7 +7,7 @@
  * - Processes payment (cash / UPI / card / insurance)
  * - Closes the visit
  */
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { visitService } from '@/services/visitService'
@@ -36,6 +36,7 @@ export default function BillingPage() {
   const [lineItems, setLineItems] = useState<LineItemRow[]>([
     { description: 'Consultation Fee', amount: '' },
   ])
+  const [consultationFeeFixed, setConsultationFeeFixed] = useState(false)
   const [discount, setDiscount] = useState('0')
   const [tax, setTax] = useState('0')
   const [paymentMethod, setPaymentMethod] = useState('cash')
@@ -47,6 +48,14 @@ export default function BillingPage() {
     queryFn: () => visitService.get(visitId),
     enabled: !!visitId,
   })
+
+  // Auto-fill consultation fee from doctor's settings on first load
+  useEffect(() => {
+    if (visit?.doctor_consultation_fee != null && !consultationFeeFixed) {
+      setLineItems([{ description: `Consultation Fee — ${visit.doctor_name ?? 'Doctor'}`, amount: String(visit.doctor_consultation_fee) }])
+      setConsultationFeeFixed(true)
+    }
+  }, [visit, consultationFeeFixed])
 
   const subtotal = lineItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0)
   const discountAmt = parseFloat(discount) || 0
@@ -136,34 +145,41 @@ export default function BillingPage() {
             </div>
 
             <div className="divide-y divide-gray-100">
-              {lineItems.map((row, i) => (
-                <div key={i} className="flex items-center gap-3 px-5 py-3">
-                  <input
-                    value={row.description}
-                    onChange={e => updateRow(i, 'description', e.target.value)}
-                    placeholder="Service description"
-                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  />
-                  <div className="relative w-32">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₹</span>
+              {lineItems.map((row, i) => {
+                const isFixedFee = i === 0 && consultationFeeFixed
+                return (
+                  <div key={i} className={`flex items-center gap-3 px-5 py-3 ${isFixedFee ? 'bg-blue-50/50' : ''}`}>
                     <input
-                      value={row.amount}
-                      onChange={e => updateRow(i, 'amount', e.target.value)}
-                      placeholder="0.00"
-                      type="number"
-                      min="0"
-                      className="w-full pl-6 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      value={row.description}
+                      onChange={e => updateRow(i, 'description', e.target.value)}
+                      readOnly={isFixedFee}
+                      placeholder="Service description"
+                      className={`flex-1 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 ${isFixedFee ? 'border-blue-200 bg-blue-50 text-blue-800 cursor-default' : 'border-gray-300'}`}
                     />
+                    <div className="relative w-32">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₹</span>
+                      <input
+                        value={row.amount}
+                        onChange={e => updateRow(i, 'amount', e.target.value)}
+                        readOnly={isFixedFee}
+                        placeholder="0.00"
+                        type="number"
+                        min="0"
+                        className={`w-full pl-6 pr-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 ${isFixedFee ? 'border-blue-200 bg-blue-50 text-blue-800 font-semibold cursor-default' : 'border-gray-300'}`}
+                      />
+                    </div>
+                    {isFixedFee ? (
+                      <span title="Set by doctor's profile" className="text-blue-400 text-xs select-none w-4">🔒</span>
+                    ) : lineItems.length > 1 ? (
+                      <button onClick={() => removeRow(i)} className="text-gray-400 hover:text-red-500">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    ) : <span className="w-4" />}
                   </div>
-                  {lineItems.length > 1 && (
-                    <button onClick={() => removeRow(i)} className="text-gray-400 hover:text-red-500">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              ))}
+                )
+              })}
             </div>
 
             {/* Summary */}

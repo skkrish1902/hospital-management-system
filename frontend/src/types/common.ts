@@ -132,6 +132,7 @@ export interface Visit {
   patient_name?: string
   doctor_name?: string
   department_name?: string
+  doctor_consultation_fee?: number
 }
 
 export interface Vitals {
