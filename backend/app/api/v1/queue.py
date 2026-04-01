@@ -23,7 +23,7 @@ from app.models.tenant.doctor import Doctor
 from app.models.tenant.patient import Patient
 from app.models.tenant.queue_token import QueueToken
 from app.models.tenant.visit import Visit
-from app.schemas.queue import QueueTokenCreate, QueueTokenRead, QueueTokenStatusUpdate, QueueTokenUpdate
+from app.schemas.queue import CancelTokenRequest, QueueTokenCreate, QueueTokenRead, QueueTokenStatusUpdate, QueueTokenUpdate
 from app.websocket.manager import ws_manager
 
 router = APIRouter()
@@ -214,7 +214,7 @@ async def edit_token(
 @router.post("/{token_id}/cancel", response_model=QueueTokenRead)
 async def cancel_token(
     token_id: uuid.UUID,
-    payload: QueueTokenStatusUpdate,
+    payload: CancelTokenRequest,
     session: AsyncSession = Depends(get_session),
     current_user: dict = Depends(require_role("receptionist", "hospital_admin", "super_admin")),
 ):

@@ -43,6 +43,10 @@ class QueueTokenStatusUpdate(BaseModel):
     notes: Optional[str] = None  # required when status == cancelled
 
 
+class CancelTokenRequest(BaseModel):
+    notes: str  # mandatory cancellation reason
+
+
 class QueueTokenUpdate(BaseModel):
     department_id: Optional[uuid.UUID] = None
     doctor_id: Optional[uuid.UUID] = None
