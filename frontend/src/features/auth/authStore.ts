@@ -7,6 +7,7 @@ interface AuthUser {
   fullName: string
   role: string
   tenantSchema: string
+  hospitalName: string
 }
 
 interface AuthState {
@@ -46,6 +47,7 @@ export const useAuthStore = create<AuthState>()(
             fullName: (payload.full_name as string) ?? '',
             role: (payload.role as string) ?? '',
             tenantSchema: (payload.tenant_schema as string) ?? '',
+            hospitalName: (payload.hospital_name as string) ?? '',
           },
         })
       },

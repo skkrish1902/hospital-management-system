@@ -43,6 +43,7 @@ async def login(payload: LoginRequest, session: AsyncSession = Depends(get_sessi
     extra_claims = {
         "role": user.role,
         "tenant_schema": tenant.schema_name,
+        "hospital_name": tenant.hospital_name,
         "full_name": user.full_name,
     }
     access_token = create_access_token(subject=str(user.id), extra_claims=extra_claims)
@@ -71,7 +72,7 @@ async def refresh(payload: RefreshRequest, session: AsyncSession = Depends(get_s
     tenant_result = await session.execute(select(Tenant).where(Tenant.id == user.tenant_id))
     tenant = tenant_result.scalar_one_or_none()
 
-    extra_claims = {"role": user.role, "tenant_schema": tenant.schema_name, "full_name": user.full_name}
+    extra_claims = {"role": user.role, "tenant_schema": tenant.schema_name, "hospital_name": tenant.hospital_name, "full_name": user.full_name}
     access_token = create_access_token(subject=str(user.id), extra_claims=extra_claims)
     new_refresh = create_refresh_token(subject=str(user.id))
     return TokenResponse(access_token=access_token, refresh_token=new_refresh)
