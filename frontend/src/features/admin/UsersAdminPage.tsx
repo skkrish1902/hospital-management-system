@@ -156,6 +156,8 @@ export default function UsersAdminPage() {
   const [editing, setEditing] = useState<StaffUser | null>(null)
   const [showInactive, setShowInactive] = useState(false)
   const [createdCreds, setCreatedCreds] = useState<CreatedCreds | null>(null)
+  const [resetTarget, setResetTarget] = useState<StaffUser | null>(null)
+  const [resetDone, setResetDone] = useState<{ phone: string; name: string } | null>(null)
 
   const { data: users = [], isLoading } = useQuery({
     queryKey: ['staff-users', showInactive],
@@ -206,6 +208,15 @@ export default function UsersAdminPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['staff-users'] })
       setEditing(null)
+    },
+  })
+
+  const resetPasswordMut = useMutation({
+    mutationFn: (id: string) => userService.resetPassword(id),
+    onSuccess: (data, id) => {
+      const user = users.find(u => u.id === id)
+      setResetTarget(null)
+      setResetDone({ phone: data.phone, name: user?.full_name ?? '' })
     },
   })
 
@@ -263,10 +274,10 @@ export default function UsersAdminPage() {
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>
-                {['Full Name', 'Email', 'Username', 'Phone', 'Role', 'Status', ''].map(h => (
+                {['Full Name', 'Email', 'Username', 'Phone', 'Role', 'Status', 'Actions'].map(h => (
                   <th
                     key={h}
-                    className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide"
+                    className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide ${h === 'Actions' ? 'text-right w-48' : ''}`}
                   >
                     {h}
                   </th>
@@ -286,19 +297,51 @@ export default function UsersAdminPage() {
                   <td className="px-4 py-3">
                     <StatusBadge active={user.is_active} />
                   </td>
-                  <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
-                    <button
-                      onClick={() => openEdit(user)}
-                      className="text-primary hover:underline text-xs"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => toggleActive(user)}
-                      className="text-gray-400 hover:text-gray-600 text-xs"
-                    >
-                      {user.is_active ? 'Deactivate' : 'Activate'}
-                    </button>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1.5 justify-end">
+                      <button
+                        onClick={() => openEdit(user)}
+                        title="Edit"
+                        className="group p-1.5 rounded-lg border border-primary text-primary hover:bg-primary/10 relative"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                        <span className="absolute -top-7 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">Edit</span>
+                      </button>
+                      <button
+                        onClick={() => setResetTarget(user)}
+                        title="Reset Password"
+                        className="group p-1.5 rounded-lg border border-amber-400 text-amber-600 hover:bg-amber-50 relative"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                        </svg>
+                        <span className="absolute -top-7 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">Reset Password</span>
+                      </button>
+                      <button
+                        onClick={() => toggleActive(user)}
+                        title={user.is_active ? 'Deactivate' : 'Activate'}
+                        className={`group p-1.5 rounded-lg border relative ${
+                          user.is_active
+                            ? 'border-red-300 text-red-600 hover:bg-red-50'
+                            : 'border-green-400 text-green-600 hover:bg-green-50'
+                        }`}
+                      >
+                        {user.is_active ? (
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                          </svg>
+                        ) : (
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        )}
+                        <span className="absolute -top-7 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
+                          {user.is_active ? 'Deactivate' : 'Activate'}
+                        </span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -519,6 +562,56 @@ export default function UsersAdminPage() {
       {/* Credentials modal */}
       {createdCreds && (
         <CredentialsModal creds={createdCreds} onClose={() => setCreatedCreds(null)} />
+      )}
+
+      {/* Reset Password — confirm modal */}
+      {resetTarget && (
+        <Modal title="Reset Password" onClose={() => setResetTarget(null)}>
+          <p className="text-sm text-gray-600 mb-5">
+            A new password will be generated and sent via SMS to{' '}
+            <strong>{resetTarget.phone ?? 'the user\'s registered number'}</strong> for{' '}
+            <strong>{resetTarget.full_name}</strong>.
+          </p>
+          {resetPasswordMut.isError && (
+            <p className="text-xs text-red-500 mb-3">
+              {(resetPasswordMut.error as { response?: { data?: { detail?: string } } })?.response
+                ?.data?.detail ?? 'Failed to reset password. Please try again.'}
+            </p>
+          )}
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setResetTarget(null)}
+              className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900"
+            >
+              Cancel
+            </button>
+            <button
+              disabled={resetPasswordMut.isPending}
+              onClick={() => resetPasswordMut.mutate(resetTarget.id)}
+              className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-50"
+            >
+              {resetPasswordMut.isPending ? 'Resetting…' : 'Yes, Reset & Send SMS'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Reset Password — success modal */}
+      {resetDone && (
+        <Modal title="Password Reset" onClose={() => setResetDone(null)}>
+          <p className="text-sm text-gray-600 mb-5">
+            A new password has been sent via SMS to <strong>{resetDone.phone}</strong> for{' '}
+            <strong>{resetDone.name}</strong>.
+          </p>
+          <div className="flex justify-end">
+            <button
+              onClick={() => setResetDone(null)}
+              className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary/90"
+            >
+              Done
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   )

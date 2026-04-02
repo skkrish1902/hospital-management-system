@@ -1,8 +1,11 @@
 /**
  * Nurse Station
  *
- * Tab 1 – "Vitals": registered patients awaiting vitals + vitals_recorded patients ready to send to doctor
- * Tab 2 – "Dispatch": prescription_done / dispatched_pharmacy / dispatched_lab — nurse dispatches
+ * Two-column layout — always visible:
+ * Left  – Awaiting Vitals: registered patients (click row to expand accordion vitals form)
+ *          + vitals_recorded patients ready to send to doctor
+ * Right – Dispatch Queue: prescription_done / dispatched_pharmacy (active)
+ *          Completed Today (expandable): dispatched_lab / dispatched_both / billing_pending / closed
  */
 import { useState, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -13,9 +16,11 @@ import { z } from 'zod'
 import { visitService, vitalsService, consultationService, type VitalsCreate } from '@/services/visitService'
 import { nurseDeptService } from '@/services/nurseDeptService'
 import { prescriptionService } from '@/services/clinicalService'
+import { pharmacyService } from '@/services/pharmacyService'
 import { useAuthStore } from '@/features/auth/authStore'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import type { Visit, Prescription, Consultation } from '@/types/common'
+import { printPrescription } from '@/utils/printPrescription'
+import type { Visit } from '@/types/common'
 
 const vitalsSchema = z.object({
   bp_systolic: z.coerce.number().int().min(40).max(300).optional().or(z.literal('')),
@@ -28,10 +33,8 @@ const vitalsSchema = z.object({
 })
 
 type VitalsForm = z.infer<typeof vitalsSchema>
-type ActiveTab = 'vitals' | 'dispatch'
 
 export default function NurseVitalsPage() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('vitals')
   const [selectedVisit, setSelectedVisit] = useState<Visit | null>(null)
   const [prescriptionVisitId, setPrescriptionVisitId] = useState<string | null>(null)
   const [activeDeptId, setActiveDeptId] = useState<string | undefined>(undefined)
@@ -40,6 +43,7 @@ export default function NurseVitalsPage() {
   } | null>(null)
   const [closingVisit, setClosingVisit] = useState<Visit | null>(null)
   const [additionalBilling, setAdditionalBilling] = useState(false)
+  const [completedOpen, setCompletedOpen] = useState(false)
   const navigate = useNavigate()
   const qc = useQueryClient()
   const hospitalName = useAuthStore(s => s.user?.hospitalName ?? s.user?.tenantSchema ?? 'Hospital')
@@ -97,6 +101,37 @@ export default function NurseVitalsPage() {
     refetchInterval: 30_000,
   })
 
+  const { data: dispatchedBothVisits = [], refetch: refetchBoth } = useQuery({
+    queryKey: ['visits', 'dispatched_both', deptId],
+    queryFn: () => visitService.list({ status: 'dispatched_both', department_id: deptId }),
+    refetchInterval: 30_000,
+  })
+
+  const { data: billingPendingVisits = [], refetch: refetchBillingPending } = useQuery({
+    queryKey: ['visits', 'billing_pending', deptId],
+    queryFn: () => visitService.list({ status: 'billing_pending', department_id: deptId }),
+    refetchInterval: 30_000,
+  })
+
+  const { data: closedVisits = [], refetch: refetchClosed } = useQuery({
+    queryKey: ['visits', 'closed', deptId],
+    queryFn: () => visitService.list({ status: 'closed', department_id: deptId }),
+    refetchInterval: 30_000,
+  })
+
+  // Pharmacy queue — fetch active items to show status in dispatch cards
+  const { data: pharmacyQueue = [], refetch: refetchPharmacyQueue } = useQuery({
+    queryKey: ['pharmacy-queue', 'active'],
+    queryFn: () => pharmacyService.list(),
+    refetchInterval: 20_000,
+  })
+  // Map visitId → pharmacy status for quick lookup
+  const pharmacyStatusByVisit = Object.fromEntries(
+    pharmacyQueue
+      .filter(pq => pq.visit_id)
+      .map(pq => [String(pq.visit_id), pq.status])
+  )
+
   // Prescription for the selected dispatch visit
   const { data: prescription } = useQuery({
     queryKey: ['prescription', prescriptionVisitId],
@@ -104,8 +139,16 @@ export default function NurseVitalsPage() {
     enabled: !!prescriptionVisitId,
   })
 
-  const dispatchVisits = [...prescriptionDoneVisits, ...dispatchedPharmacyVisits, ...dispatchedLabVisits]
+  // Active dispatch queue: prescription ready or pharmacy dispatched (lab not yet done)
+  const dispatchVisits = [...prescriptionDoneVisits, ...dispatchedPharmacyVisits]
     .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+
+  const todayStr = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD in local time
+
+  // Completed: lab dispatched, both dispatched, closed, or sent to billing — today only
+  const completedVisits = [...dispatchedLabVisits, ...dispatchedBothVisits, ...billingPendingVisits, ...closedVisits]
+    .filter(v => new Date(v.created_at).toLocaleDateString('en-CA') === todayStr)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 
   const onUpdate = useCallback(() => {
     refetchRegistered()
@@ -113,10 +156,15 @@ export default function NurseVitalsPage() {
     refetchPrescription()
     refetchPharmacy()
     refetchLab()
-  }, [refetchRegistered, refetchVitalsRecorded, refetchPrescription, refetchPharmacy, refetchLab])
+    refetchBoth()
+    refetchBillingPending()
+    refetchClosed()
+    refetchPharmacyQueue()
+  }, [refetchRegistered, refetchVitalsRecorded, refetchPrescription, refetchPharmacy, refetchLab, refetchBoth, refetchBillingPending, refetchClosed, refetchPharmacyQueue])
 
   useWebSocket('visit:update', onUpdate)
   useWebSocket('queue:update', onUpdate)
+  useWebSocket('pharmacy:update', onUpdate)
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<VitalsForm>({
     resolver: zodResolver(vitalsSchema),
@@ -183,9 +231,6 @@ export default function NurseVitalsPage() {
     })
   }
 
-  const vitalsTabCount = registeredVisits.length + vitalsRecordedVisits.length
-  const dispatchTabCount = dispatchVisits.length
-
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -213,43 +258,29 @@ export default function NurseVitalsPage() {
               ))}
             </select>
           )}
-          <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
-            {(['vitals', 'dispatch'] as ActiveTab[]).map(tab => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-4 py-1.5 rounded-md text-xs font-medium capitalize transition-all ${
-                  activeTab === tab ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                {tab === 'vitals' ? `Vitals (${vitalsTabCount})` : `Dispatch (${dispatchTabCount})`}
-              </button>
-            ))}
-          </div>
         </div>
       </div>
 
-      {activeTab === 'vitals' ? (
-        <div className="space-y-6">
-          {/* Awaiting Vitals + Form */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Patient list */}
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
-                <h2 className="text-sm font-semibold text-gray-700">Awaiting Vitals ({registeredVisits.length})</h2>
-              </div>
-              <div className="divide-y divide-gray-100">
-                {registeredVisits.length === 0 ? (
-                  <div className="p-8 text-center text-gray-400">
-                    <svg className="w-10 h-10 mx-auto mb-2 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    All caught up!
-                  </div>
-                ) : registeredVisits.map(v => (
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* LEFT: Vitals */}
+        <div className="space-y-4">
+          {/* Awaiting Vitals — inline accordion form */}
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
+              <h2 className="text-sm font-semibold text-gray-700">Awaiting Vitals ({registeredVisits.length})</h2>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {registeredVisits.length === 0 ? (
+                <div className="p-8 text-center text-gray-400">
+                  <svg className="w-10 h-10 mx-auto mb-2 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  All caught up!
+                </div>
+              ) : registeredVisits.map(v => (
+                <div key={v.id}>
                   <button
-                    key={v.id}
-                    onClick={() => { setSelectedVisit(v); reset() }}
+                    onClick={() => { setSelectedVisit(selectedVisit?.id === v.id ? null : v); reset() }}
                     className={`w-full text-left px-4 py-3 hover:bg-blue-50 transition-colors ${
                       selectedVisit?.id === v.id ? 'bg-blue-50 border-l-2 border-blue-500' : ''
                     }`}
@@ -261,73 +292,65 @@ export default function NurseVitalsPage() {
                           {v.doctor_name ? `Dr. ${v.doctor_name}` : 'Unassigned'} · {new Date(v.created_at).toLocaleTimeString()}
                         </p>
                       </div>
-                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Waiting</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Waiting</span>
+                        <svg
+                          className={`w-4 h-4 text-gray-400 transition-transform ${selectedVisit?.id === v.id ? 'rotate-180' : ''}`}
+                          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
                     </div>
                   </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Vitals form */}
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
-                <h2 className="text-sm font-semibold text-gray-700">
-                  {selectedVisit ? `Record Vitals — ${selectedVisit.patient_name}` : 'Select a patient'}
-                </h2>
-              </div>
-              {!selectedVisit ? (
-                <div className="p-8 text-center text-gray-400">
-                  <svg className="w-10 h-10 mx-auto mb-2 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                  Select a patient from the list
-                </div>
-              ) : (
-                <form onSubmit={handleSubmit(onSubmit)} className="p-5 space-y-4">
-                  {vitalsError && (
-                    <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
-                      Failed to save vitals. Please try again.
-                    </div>
+                  {selectedVisit?.id === v.id && (
+                    <form onSubmit={handleSubmit(onSubmit)} className="px-5 pb-5 pt-3 bg-blue-50 border-t border-blue-100 space-y-4">
+                      {vitalsError && (
+                        <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+                          Failed to save vitals. Please try again.
+                        </div>
+                      )}
+                      <div className="grid grid-cols-2 gap-3">
+                        <VitalField label="Systolic BP (mmHg)" error={errors.bp_systolic?.message}>
+                          <input {...register('bp_systolic')} type="number" placeholder="120" className={inputCls(false)} />
+                        </VitalField>
+                        <VitalField label="Diastolic BP (mmHg)" error={errors.bp_diastolic?.message}>
+                          <input {...register('bp_diastolic')} type="number" placeholder="80" className={inputCls(false)} />
+                        </VitalField>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <VitalField label="Temperature (°C)" error={errors.temperature?.message}>
+                          <input {...register('temperature')} type="number" step="0.1" placeholder="37.0" className={inputCls(false)} />
+                        </VitalField>
+                        <VitalField label="SpO₂ (%)" error={errors.spo2?.message}>
+                          <input {...register('spo2')} type="number" placeholder="98" className={inputCls(false)} />
+                        </VitalField>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <VitalField label="Pulse (bpm)" error={errors.pulse?.message}>
+                          <input {...register('pulse')} type="number" placeholder="72" className={inputCls(false)} />
+                        </VitalField>
+                        <VitalField label="Weight (kg)" error={errors.weight?.message}>
+                          <input {...register('weight')} type="number" step="0.1" placeholder="70" className={inputCls(false)} />
+                        </VitalField>
+                      </div>
+                      <VitalField label="Height (cm)" error={errors.height?.message}>
+                        <input {...register('height')} type="number" step="0.1" placeholder="170" className={inputCls(false)} />
+                      </VitalField>
+                      <div className="flex gap-3 pt-1">
+                        <button type="button" onClick={() => { setSelectedVisit(null); reset() }}
+                          className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg text-sm font-medium hover:bg-white">
+                          Cancel
+                        </button>
+                        <button type="submit" disabled={isPending}
+                          className="flex-1 bg-primary text-white py-2 rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
+                          {isPending ? 'Saving…' : 'Save Vitals'}
+                        </button>
+                      </div>
+                    </form>
                   )}
-                  <div className="grid grid-cols-2 gap-4">
-                    <VitalField label="Systolic BP (mmHg)" error={errors.bp_systolic?.message}>
-                      <input {...register('bp_systolic')} type="number" placeholder="120" className={inputCls(false)} />
-                    </VitalField>
-                    <VitalField label="Diastolic BP (mmHg)" error={errors.bp_diastolic?.message}>
-                      <input {...register('bp_diastolic')} type="number" placeholder="80" className={inputCls(false)} />
-                    </VitalField>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <VitalField label="Temperature (°C)" error={errors.temperature?.message}>
-                      <input {...register('temperature')} type="number" step="0.1" placeholder="37.0" className={inputCls(false)} />
-                    </VitalField>
-                    <VitalField label="SpO₂ (%)" error={errors.spo2?.message}>
-                      <input {...register('spo2')} type="number" placeholder="98" className={inputCls(false)} />
-                    </VitalField>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <VitalField label="Pulse (bpm)" error={errors.pulse?.message}>
-                      <input {...register('pulse')} type="number" placeholder="72" className={inputCls(false)} />
-                    </VitalField>
-                    <VitalField label="Weight (kg)" error={errors.weight?.message}>
-                      <input {...register('weight')} type="number" step="0.1" placeholder="70" className={inputCls(false)} />
-                    </VitalField>
-                  </div>
-                  <VitalField label="Height (cm)" error={errors.height?.message}>
-                    <input {...register('height')} type="number" step="0.1" placeholder="170" className={inputCls(false) + ' max-w-[50%]'} />
-                  </VitalField>
-                  <div className="flex gap-3 pt-2">
-                    <button type="button" onClick={() => { setSelectedVisit(null); reset() }}
-                      className="flex-1 border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-50">
-                      Cancel
-                    </button>
-                    <button type="submit" disabled={isPending}
-                      className="flex-1 bg-primary text-white py-2.5 rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
-                      {isPending ? 'Saving…' : 'Save Vitals'}
-                    </button>
-                  </div>
-                </form>
-              )}
+                </div>
+              ))}
             </div>
           </div>
 
@@ -365,9 +388,12 @@ export default function NurseVitalsPage() {
             </div>
           )}
         </div>
-      ) : (
-        /* Dispatch tab */
+
+        {/* RIGHT: Dispatch Queue + Completed */}
         <div className="space-y-4">
+          <div className="px-1 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-gray-700">Dispatch Queue ({dispatchVisits.length})</h2>
+          </div>
           {dispatchVisits.length === 0 ? (
             <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
               No patients awaiting dispatch
@@ -380,11 +406,16 @@ export default function NurseVitalsPage() {
               <div key={v.id} className="bg-white rounded-xl border border-gray-200 p-5">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <p className="font-semibold text-gray-900">{v.patient_name || 'Patient'}</p>
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${badge.color}`}>
                         {badge.label}
                       </span>
+                      {v.status === 'dispatched_pharmacy' && pharmacyStatusByVisit[v.id] && (
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium border ${pharmacyStatusChip(pharmacyStatusByVisit[v.id])}`}>
+                          💊 {pharmacyStatusLabel(pharmacyStatusByVisit[v.id])}
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-gray-500 mt-0.5">
                       {v.doctor_name ? `Dr. ${v.doctor_name}` : ''} · {v.department_name || ''} · {new Date(v.created_at).toLocaleTimeString()}
@@ -455,8 +486,48 @@ export default function NurseVitalsPage() {
               </div>
             )
           })}
+          {/* Completed Today — expandable */}
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <button
+              onClick={() => setCompletedOpen(o => !o)}
+              className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-gray-700">Completed Today</span>
+                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">{completedVisits.length}</span>
+              </div>
+              <svg
+                className={`w-4 h-4 text-gray-400 transition-transform ${completedOpen ? 'rotate-180' : ''}`}
+                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {completedOpen && (
+              <div className="divide-y divide-gray-100 border-t border-gray-100">
+                {completedVisits.length === 0 ? (
+                  <div className="p-6 text-center text-gray-400 text-sm">No completed visits yet today</div>
+                ) : completedVisits.map(v => {
+                  const badge = statusBadge(v.status)
+                  return (
+                    <div key={v.id} className="flex items-center justify-between px-4 py-3">
+                      <div>
+                        <p className="font-medium text-gray-900 text-sm">{v.patient_name || 'Patient'}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {v.doctor_name ? `Dr. ${v.doctor_name}` : ''}{v.doctor_name && v.department_name ? ' · ' : ''}{v.department_name || ''} · {new Date(v.created_at).toLocaleTimeString()}
+                        </p>
+                      </div>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ml-3 ${badge.color}`}>
+                        {badge.label}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
         </div>
-      )}
+      </div>
 
       {/* Dispatch Confirmation Modal (pharmacy / lab) */}
       {dispatchConfirm && (
@@ -537,10 +608,31 @@ export default function NurseVitalsPage() {
   )
 }
 
+function pharmacyStatusLabel(status: string) {
+  if (status === 'pending')   return 'Pharmacy: Pending'
+  if (status === 'preparing') return 'Pharmacy: Preparing'
+  if (status === 'ready')     return 'Pharmacy: Ready'
+  if (status === 'partial')   return 'Pharmacy: Partial'
+  if (status === 'dispensed') return 'Pharmacy: Dispensed'
+  return `Pharmacy: ${status}`
+}
+
+function pharmacyStatusChip(status: string) {
+  if (status === 'pending')   return 'bg-gray-50 text-gray-500 border-gray-200'
+  if (status === 'preparing') return 'bg-amber-50 text-amber-600 border-amber-200'
+  if (status === 'ready')     return 'bg-green-50 text-green-700 border-green-200'
+  if (status === 'partial')   return 'bg-yellow-50 text-yellow-600 border-yellow-200'
+  if (status === 'dispensed') return 'bg-teal-50 text-teal-700 border-teal-200'
+  return 'bg-gray-50 text-gray-500 border-gray-200'
+}
+
 function statusBadge(status: string) {
   if (status === 'prescription_done') return { color: 'bg-purple-100 text-purple-700', label: 'Prescription Ready' }
   if (status === 'dispatched_pharmacy') return { color: 'bg-orange-100 text-orange-700', label: 'Pharmacy ✓' }
   if (status === 'dispatched_lab') return { color: 'bg-blue-100 text-blue-700', label: 'Lab ✓' }
+  if (status === 'dispatched_both') return { color: 'bg-teal-100 text-teal-700', label: 'Pharmacy ✓  Lab ✓' }
+  if (status === 'billing_pending') return { color: 'bg-yellow-100 text-yellow-700', label: 'Billing Pending' }
+  if (status === 'closed') return { color: 'bg-green-100 text-green-700', label: 'Closed' }
   return { color: 'bg-gray-100 text-gray-700', label: status }
 }
 
@@ -556,169 +648,4 @@ function VitalField({ label, error, children }: { label: string; error?: string;
 
 function inputCls(hasError: boolean) {
   return `w-full border ${hasError ? 'border-red-400' : 'border-gray-300'} rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary`
-}
-
-function printPrescription(
-  visit: Visit,
-  prescription: Prescription | null,
-  consultation: Consultation | null,
-  hospitalName: string,
-) {
-  const date = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })
-  const visitDate = new Date(visit.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-
-  const diagnosisStr = consultation?.diagnosis_icd10?.length
-    ? consultation.diagnosis_icd10.map(d => `${d.code}${d.description ? ' — ' + d.description : ''}`).join(', ')
-    : ''
-
-  const medicinesHtml = (prescription?.medicines?.length ?? 0) > 0
-    ? `<div class="section">
-        <div class="section-title">Medicines</div>
-        ${prescription!.medicines.map((m: any, i: number) => `
-          <div class="item-row">
-            <span class="item-num">${i + 1}.</span>
-            <div>
-              <strong>${m.name}</strong>
-              <div class="medicine-detail">${[m.dose || m.dosage, m.route, m.frequency, m.duration].filter(Boolean).join(' · ')}${(m.instructions || m.notes) ? ' · <em>' + (m.instructions || m.notes) + '</em>' : ''}</div>
-            </div>
-          </div>`).join('')}
-      </div>`
-    : ''
-
-  const labHtml = (prescription?.lab_tests?.length ?? 0) > 0
-    ? `<div class="section">
-        <div class="section-title">Lab Tests</div>
-        ${prescription!.lab_tests!.map((t: any, i: number) => `
-          <div class="item-row">
-            <span class="item-num">${i + 1}.</span>
-            <span>${t.test_name}${t.notes ? ` <span class="note">(${t.notes})</span>` : ''}</span>
-          </div>`).join('')}
-      </div>`
-    : ''
-
-  const consultHtml = consultation
-    ? `<div class="section">
-        <div class="section-title">Consultation Notes</div>
-        ${consultation.chief_complaint ? `<div class="field-row"><span class="field-label">Chief Complaint:</span><span>${consultation.chief_complaint}</span></div>` : ''}
-        ${consultation.history ? `<div class="field-row"><span class="field-label">History:</span><span>${consultation.history}</span></div>` : ''}
-        ${consultation.examination ? `<div class="field-row"><span class="field-label">Examination:</span><span>${consultation.examination}</span></div>` : ''}
-        ${diagnosisStr ? `<div class="field-row"><span class="field-label">Diagnosis:</span><span>${diagnosisStr}</span></div>` : ''}
-        ${consultation.notes ? `<div class="field-row"><span class="field-label">Notes:</span><span>${consultation.notes}</span></div>` : ''}
-        ${consultation.follow_up_date ? `<div class="field-row"><span class="field-label">Follow-up:</span><span>${new Date(consultation.follow_up_date).toLocaleDateString('en-IN')}</span></div>` : ''}
-      </div>`
-    : ''
-
-  const instructionsHtml = prescription?.instructions
-    ? `<div class="section">
-        <div class="section-title">Instructions to Patient</div>
-        <div class="instructions-box">${prescription.instructions}</div>
-      </div>`
-    : ''
-
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>Prescription — ${visit.patient_name ?? 'Patient'}</title>
-  <style>
-    @page { size: A4 portrait; margin: 18mm 15mm 20mm 15mm; }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: Arial, Helvetica, sans-serif; font-size: 11pt; color: #111; background: #fff; }
-
-    /* ── Header ── */
-    .header { position: relative; text-align: center; padding-bottom: 10px; border-bottom: 2.5px solid #222; margin-bottom: 14px; }
-    .hospital-name { font-size: 20pt; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; }
-    .hospital-sub { font-size: 9.5pt; color: #555; margin-top: 2px; letter-spacing: 0.5px; }
-    .print-date { position: absolute; top: 0; right: 0; font-size: 9.5pt; color: #444; line-height: 1.4; text-align: right; }
-
-    /* ── Title ── */
-    .doc-title { text-align: center; font-size: 12pt; font-weight: bold; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 12px; color: #333; }
-
-    /* ── Patient meta ── */
-    .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; margin-bottom: 12px; font-size: 10.5pt; }
-    .meta-row { display: flex; gap: 6px; }
-    .meta-label { font-weight: bold; min-width: 95px; color: #333; }
-    .meta-value { color: #111; }
-
-    hr.dashed { border: none; border-top: 1px dashed #bbb; margin: 10px 0; }
-
-    /* ── Sections ── */
-    .section { margin: 12px 0; }
-    .section-title { font-size: 10pt; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; color: #444; border-bottom: 1px solid #ccc; padding-bottom: 3px; margin-bottom: 8px; }
-
-    /* Consultation */
-    .field-row { display: flex; gap: 8px; margin: 5px 0; font-size: 10.5pt; }
-    .field-label { font-weight: bold; min-width: 120px; color: #333; }
-
-    /* Medicines */
-    .item-row { display: flex; gap: 8px; margin: 6px 0; align-items: flex-start; font-size: 10.5pt; }
-    .item-num { min-width: 18px; font-weight: bold; }
-    .medicine-detail { font-size: 10pt; color: #444; margin-top: 1px; }
-    .note { color: #666; font-size: 10pt; }
-
-    /* Instructions */
-    .instructions-box { background: #f8f8f8; border: 1px solid #ddd; border-radius: 3px; padding: 8px 12px; font-size: 10.5pt; line-height: 1.5; }
-
-    /* Footer */
-    .footer { margin-top: 40px; display: flex; justify-content: flex-end; page-break-inside: avoid; }
-    .signature-box { text-align: center; width: 180px; }
-    .signature-line { border-top: 1px solid #333; margin-bottom: 5px; }
-    .signature-name { font-weight: bold; font-size: 10.5pt; }
-    .signature-sub { font-size: 9.5pt; color: #555; }
-  </style>
-</head>
-<body>
-
-  <!-- Header -->
-  <div class="header">
-    <div class="print-date">
-      Date: ${date}
-    </div>
-    <div class="hospital-name">${hospitalName}</div>
-    <div class="hospital-sub">OPD Prescription</div>
-  </div>
-
-  <div class="doc-title">Prescription</div>
-
-  <!-- Patient / Doctor meta -->
-  <div class="meta-grid">
-    <div class="meta-row"><span class="meta-label">Patient:</span><span class="meta-value">${visit.patient_name ?? '—'}</span></div>
-    <div class="meta-row"><span class="meta-label">Doctor:</span><span class="meta-value">${visit.doctor_name ? 'Dr. ' + visit.doctor_name : '—'}</span></div>
-    <div class="meta-row"><span class="meta-label">Department:</span><span class="meta-value">${visit.department_name ?? '—'}</span></div>
-    <div class="meta-row"><span class="meta-label">Visit Date:</span><span class="meta-value">${visitDate}</span></div>
-  </div>
-
-  <hr class="dashed"/>
-
-  ${consultHtml}
-  ${consultHtml ? '<hr class="dashed"/>' : ''}
-  ${medicinesHtml}
-  ${medicinesHtml && labHtml ? '<hr class="dashed"/>' : ''}
-  ${labHtml}
-  ${instructionsHtml ? '<hr class="dashed"/>' : ''}
-  ${instructionsHtml}
-
-  <!-- Signature -->
-  <div class="footer">
-    <div class="signature-box">
-      <div class="signature-line"></div>
-      <div class="signature-name">Dr. ${visit.doctor_name ?? '—'}</div>
-      <div class="signature-sub">Doctor's Signature</div>
-    </div>
-  </div>
-
-</body>
-</html>`
-
-  const win = window.open('', '_blank', 'width=794,height=1123,menubar=no,toolbar=no')
-  if (!win) {
-    alert('Pop-up blocked. Please allow pop-ups for this site to print.')
-    return
-  }
-  win.document.write(html)
-  win.document.close()
-  win.focus()
-  // Use afterprint to auto-close the print window
-  win.addEventListener('afterprint', () => win.close())
-  win.print()
 }

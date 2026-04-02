@@ -25,7 +25,7 @@ router = APIRouter()
 async def list_pharmacy_queue(
     status_filter: Optional[str] = Query(None, alias="status"),
     session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_role("nurse", "receptionist", "hospital_admin", "super_admin")),
+    _: dict = Depends(require_role("pharmacist", "nurse", "receptionist", "hospital_admin", "super_admin")),
 ):
     """Returns pharmacy queue items, optionally filtered by status."""
     stmt = select(PharmacyQueue).order_by(PharmacyQueue.updated_at.asc())
@@ -54,7 +54,7 @@ async def update_pharmacy_status(
     pq_id: uuid.UUID,
     payload: PharmacyStatusUpdate,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("nurse", "receptionist", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("pharmacist", "nurse", "receptionist", "hospital_admin", "super_admin")),
 ):
     pq = await session.get(PharmacyQueue, pq_id)
     if not pq:

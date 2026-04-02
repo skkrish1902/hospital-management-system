@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_role
 from app.core.security import hash_password, generate_temp_password
-from app.core.sms import send_doctor_credentials
+from app.core.sms import send_doctor_credentials, send_staff_credentials
 from app.core.username import generate_username
 from app.db.engine import get_session
 from app.models.public.user import Tenant, User
@@ -179,3 +179,42 @@ async def update_user(
 
     await session.commit()
     return _row_to_dict(user)
+
+
+@router.post("/{user_id}/reset-password", response_model=dict)
+async def reset_user_password(
+    user_id: _uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(require_role("hospital_admin")),
+):
+    """Generate a new random password for a staff user and send it via SMS."""
+    tenant_schema: str = current_user.get("tenant_schema", "")
+    tenant = (await session.execute(
+        select(Tenant).where(Tenant.schema_name == tenant_schema)
+    )).scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Tenant not found")
+
+    user = (await session.execute(
+        select(User).where(User.id == user_id, User.tenant_id == tenant.id)
+    )).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.role == "doctor":
+        raise HTTPException(status_code=400, detail="Use /doctors endpoints to manage doctors")
+    if not user.phone:
+        raise HTTPException(status_code=400, detail="User has no phone number — cannot send SMS")
+
+    new_password = generate_temp_password()
+    user.hashed_password = hash_password(new_password)
+    await session.commit()
+
+    send_staff_credentials(
+        to_phone=user.phone,
+        full_name=user.full_name,
+        username=user.username,
+        password=new_password,
+        hospital_name=tenant.hospital_name,
+    )
+
+    return {"detail": "Password reset. New credentials sent via SMS.", "phone": user.phone}

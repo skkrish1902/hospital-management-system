@@ -60,3 +60,49 @@ def send_doctor_credentials(
         logger.info("Credentials SMS sent to %s", to_phone)
     except Exception:
         logger.exception("Failed to send credentials SMS to %s", to_phone)
+
+
+def send_staff_credentials(
+    *,
+    to_phone: str,
+    full_name: str,
+    username: str,
+    password: str,
+    hospital_name: str = "your hospital",
+) -> None:
+    """
+    Send an SMS to a staff member with their (new) login credentials.
+    Raises nothing — any Twilio error is logged and swallowed.
+    """
+    sid = settings.TWILIO_ACCOUNT_SID
+    token = settings.TWILIO_AUTH_TOKEN
+    from_number = settings.TWILIO_FROM_NUMBER
+
+    if not (sid and token and from_number):
+        logger.warning(
+            "Twilio not configured — skipping SMS to %s.",
+            to_phone,
+        )
+        return
+
+    message_body = (
+        f"Hello {full_name},\n\n"
+        f"Your login credentials for {hospital_name} have been reset:\n"
+        f"  Username : {username}\n"
+        f"  Password : {password}\n\n"
+        f"Please change your password after logging in.\n"
+        f"— Admin Team"
+    )
+
+    try:
+        from twilio.rest import Client
+
+        client = Client(sid, token)
+        client.messages.create(
+            body=message_body,
+            from_=from_number,
+            to=to_phone,
+        )
+        logger.info("Password reset SMS sent to %s", to_phone)
+    except Exception:
+        logger.exception("Failed to send password reset SMS to %s", to_phone)

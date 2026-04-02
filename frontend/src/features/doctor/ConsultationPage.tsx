@@ -14,6 +14,15 @@ import { visitService, vitalsService, consultationService } from '@/services/vis
 import { useWebSocket } from '@/hooks/useWebSocket'
 import type { Visit, Vitals } from '@/types/common'
 
+const COMPLETED_STATUSES = [
+  'prescription_done',
+  'dispatched_pharmacy',
+  'dispatched_lab',
+  'dispatched_both',
+  'billing_pending',
+  'closed',
+] as const
+
 const consultSchema = z.object({
   chief_complaint: z.string().min(1, 'Required'),
   history: z.string().optional(),
@@ -31,6 +40,7 @@ type ConsultForm = z.infer<typeof consultSchema>
 export default function ConsultationPage() {
   const [selectedVisit, setSelectedVisit] = useState<Visit | null>(null)
   const [vitals, setVitals] = useState<Vitals | null>(null)
+  const [completedOpen, setCompletedOpen] = useState(false)
   const qc = useQueryClient()
   const navigate = useNavigate()
 
@@ -47,7 +57,28 @@ export default function ConsultationPage() {
     refetchInterval: 30_000,
   })
 
-  useWebSocket('visit:update', useCallback(() => refetch(), [refetch]))
+  // All statuses that come after consultation (completed for the day)
+  const completedQueries = COMPLETED_STATUSES.map(status =>
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useQuery({
+      queryKey: ['visits', status],
+      queryFn: () => visitService.list({ status }),
+      refetchInterval: 30_000,
+    })
+  )
+  const todayStr = new Date().toLocaleDateString('en-CA')
+  const completedVisits = completedQueries
+    .flatMap(q => q.data ?? [])
+    .filter(v => new Date(v.created_at).toLocaleDateString('en-CA') === todayStr)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+
+  const onUpdate = useCallback(() => {
+    refetch()
+    completedQueries.forEach(q => q.refetch())
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refetch])
+
+  useWebSocket('visit:update', onUpdate)
 
   const {
     register,
@@ -125,6 +156,42 @@ export default function ConsultationPage() {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Completed Today — expandable */}
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <button
+            onClick={() => setCompletedOpen(o => !o)}
+            className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-gray-700">Completed Today</span>
+              <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">{completedVisits.length}</span>
+            </div>
+            <svg
+              className={`w-4 h-4 text-gray-400 transition-transform ${completedOpen ? 'rotate-180' : ''}`}
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {completedOpen && (
+            <div className="divide-y divide-gray-100 border-t border-gray-100">
+              {completedVisits.length === 0 ? (
+                <div className="p-4 text-center text-gray-400 text-xs">No completed consultations yet today</div>
+              ) : completedVisits.map(v => (
+                <div key={v.id} className="px-4 py-3">
+                  <p className="font-medium text-gray-900 text-sm">{v.patient_name}</p>
+                  <div className="flex items-center justify-between mt-0.5">
+                    <p className="text-xs text-gray-400">{new Date(v.created_at).toLocaleTimeString()}</p>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${completedBadge(v.status)}`}>
+                      {completedLabel(v.status)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -254,4 +321,28 @@ function SoapField({ label, error, children }: { label: string; error?: string; 
 
 function txtCls(hasError: boolean) {
   return `w-full border ${hasError ? 'border-red-400' : 'border-gray-300'} rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary resize-none`
+}
+
+function completedLabel(status: string) {
+  const map: Record<string, string> = {
+    prescription_done: 'Prescription Ready',
+    dispatched_pharmacy: 'Pharmacy ✓',
+    dispatched_lab: 'Lab ✓',
+    dispatched_both: 'Pharmacy ✓ Lab ✓',
+    billing_pending: 'Billing Pending',
+    closed: 'Closed',
+  }
+  return map[status] ?? status
+}
+
+function completedBadge(status: string) {
+  const map: Record<string, string> = {
+    prescription_done: 'bg-purple-100 text-purple-700',
+    dispatched_pharmacy: 'bg-orange-100 text-orange-700',
+    dispatched_lab: 'bg-blue-100 text-blue-700',
+    dispatched_both: 'bg-teal-100 text-teal-700',
+    billing_pending: 'bg-yellow-100 text-yellow-700',
+    closed: 'bg-green-100 text-green-700',
+  }
+  return map[status] ?? 'bg-gray-100 text-gray-600'
 }

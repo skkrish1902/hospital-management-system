@@ -32,6 +32,7 @@ export type VisitStatus =
   | 'prescription_done'
   | 'dispatched_pharmacy'
   | 'dispatched_lab'
+  | 'dispatched_both'
   | 'billing_pending'
   | 'closed'
 

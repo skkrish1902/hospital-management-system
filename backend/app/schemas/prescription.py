@@ -15,7 +15,7 @@ class MedicineItem(BaseModel):
 
 
 class LabTestItem(BaseModel):
-    test: str
+    test_name: str
     notes: Optional[str] = None
 
 

@@ -102,6 +102,9 @@ export const userService = {
 
   update: (id: string, data: { full_name?: string; is_active?: boolean }) =>
     apiClient.patch<import('@/types/common').StaffUser>(`/users/${id}`, data).then(r => r.data),
+
+  resetPassword: (id: string) =>
+    apiClient.post<{ detail: string; phone: string }>(`/users/${id}/reset-password`).then(r => r.data),
 }
 
 export const departmentService = {

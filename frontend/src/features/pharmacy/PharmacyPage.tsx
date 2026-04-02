@@ -3,12 +3,16 @@
  *
  * Shows patients dispatched to pharmacy.
  * Pharmacist progresses: pending → preparing → ready → dispensed
- * When dispensed, visit moves to billing_pending (handled by backend).
+ * When dispensed, prints the doctor prescription and visit moves to billing_pending.
  */
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { pharmacyService } from '@/services/pharmacyService'
+import { visitService, consultationService } from '@/services/visitService'
+import { prescriptionService } from '@/services/clinicalService'
 import { useWebSocket } from '@/hooks/useWebSocket'
+import { useAuthStore } from '@/features/auth/authStore'
+import { printPrescription } from '@/utils/printPrescription'
 import type { PharmacyQueueItem } from '@/types/common'
 
 const STATUS_FLOW: Record<string, { next: string; label: string; color: string } | null> = {
@@ -28,6 +32,8 @@ const STATUS_BADGE: Record<string, string> = {
 
 export default function PharmacyPage() {
   const qc = useQueryClient()
+  const hospitalName = useAuthStore(s => s.user?.hospitalName ?? s.user?.tenantSchema ?? 'Hospital')
+  const [dispensing, setDispensing] = useState<string | null>(null) // pq item id being dispensed
 
   const { data: items = [], refetch } = useQuery({
     queryKey: ['pharmacy'],
@@ -44,8 +50,33 @@ export default function PharmacyPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pharmacy'] }),
   })
 
-  const active = items.filter(i => i.status !== 'dispensed')
-  const dispensed = items.filter(i => i.status === 'dispensed')
+  // Dispense: print prescription first, then advance status
+  const handleDispense = useCallback(async (item: PharmacyQueueItem) => {
+    if (!item.visit_id || dispensing) return
+    setDispensing(item.id)
+    try {
+      const visitId = String(item.visit_id)
+      const [visit, prescription, consultation] = await Promise.allSettled([
+        visitService.get(visitId),
+        prescriptionService.get(visitId),
+        consultationService.get(visitId),
+      ])
+      printPrescription(
+        visit.status === 'fulfilled'
+          ? visit.value
+          : { patient_name: item.patient_name, created_at: item.updated_at, doctor_name: undefined, department_name: undefined } as any,
+        prescription.status === 'fulfilled' ? prescription.value : null,
+        consultation.status === 'fulfilled' ? consultation.value : null,
+        hospitalName,
+      )
+    } finally {
+      advance({ id: item.id, status: 'dispensed' })
+      setDispensing(null)
+    }
+  }, [dispensing, hospitalName, advance])
+
+  const active = items.filter((i: PharmacyQueueItem) => i.status !== 'dispensed')
+  const dispensed = items.filter((i: PharmacyQueueItem) => i.status === 'dispensed')
 
   return (
     <div className="p-6 space-y-6">
@@ -63,7 +94,7 @@ export default function PharmacyPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {active.map(item => <PharmacyCard key={item.id} item={item} onAdvance={advance} advancing={isPending} />)}
+          {active.map((item: PharmacyQueueItem) => <PharmacyCard key={item.id} item={item} onAdvance={advance} onDispense={handleDispense} advancing={isPending || dispensing === item.id} />)}
         </div>
       )}
 
@@ -77,7 +108,7 @@ export default function PharmacyPage() {
             {dispensed.length} dispensed orders today
           </summary>
           <div className="mt-2 space-y-2">
-            {dispensed.map(item => <PharmacyCard key={item.id} item={item} onAdvance={advance} advancing={isPending} />)}
+            {dispensed.map((item: PharmacyQueueItem) => <PharmacyCard key={item.id} item={item} onAdvance={advance} onDispense={handleDispense} advancing={isPending} />)}
           </div>
         </details>
       )}
@@ -88,10 +119,12 @@ export default function PharmacyPage() {
 function PharmacyCard({
   item,
   onAdvance,
+  onDispense,
   advancing,
 }: {
   item: PharmacyQueueItem
   onAdvance: (args: { id: string; status: string }) => void
+  onDispense: (item: PharmacyQueueItem) => void
   advancing: boolean
 }) {
   const next = STATUS_FLOW[item.status]
@@ -134,10 +167,10 @@ function PharmacyCard({
         {next && (
           <button
             disabled={advancing}
-            onClick={() => onAdvance({ id: item.id, status: next.next })}
+            onClick={() => next.next === 'dispensed' ? onDispense(item) : onAdvance({ id: item.id, status: next.next })}
             className={`shrink-0 px-4 py-2 text-white rounded-lg text-sm font-medium disabled:opacity-50 ${btnColor[next.color] || 'bg-gray-600'}`}
           >
-            {next.label}
+            {advancing && next.next === 'dispensed' ? 'Printing…' : next.label}
           </button>
         )}
       </div>

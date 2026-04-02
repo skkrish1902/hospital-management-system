@@ -2,11 +2,11 @@
 Visits API — create and manage OPD visits (visit lifecycle state machine).
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_role
@@ -18,6 +18,7 @@ from app.models.tenant.patient import Patient
 from app.models.tenant.pharmacy_queue import PharmacyQueue
 from app.models.tenant.prescription import Prescription
 from app.models.tenant.nurse_department import NurseDepartment
+from app.models.tenant.queue_token import QueueToken
 from app.models.tenant.visit import Visit
 from app.schemas.visit import VisitCreate, VisitDispatch, VisitRead, VisitStatusUpdate
 from app.websocket.manager import ws_manager
@@ -30,13 +31,34 @@ _VALID_TRANSITIONS = {
     "vitals_done": {"in_consultation"},
     "in_consultation": {"prescription_done"},
     "prescription_done": {"dispatched_pharmacy", "dispatched_lab", "billing_pending", "closed"},
-    "dispatched_pharmacy": {"dispatched_lab", "billing_pending", "closed"},
-    "dispatched_lab": {"dispatched_pharmacy", "billing_pending", "closed"},
+    "dispatched_pharmacy": {"dispatched_lab", "dispatched_both", "billing_pending", "closed"},
+    "dispatched_lab": {"dispatched_pharmacy", "dispatched_both", "billing_pending", "closed"},
+    "dispatched_both": {"billing_pending", "closed"},
     "billing_pending": {"closed"},
     "closed": set(),
 }
 
 ALLOWED_ROLES = ("receptionist", "nurse", "doctor", "billing_officer", "hospital_admin", "super_admin")
+
+
+async def _complete_queue_token(visit: Visit, session: AsyncSession) -> None:
+    """Mark today's checked-in queue token for this patient as completed."""
+    today_start = datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=timezone.utc)
+    token = (await session.execute(
+        select(QueueToken)
+        .where(
+            and_(
+                QueueToken.patient_id == visit.patient_id,
+                QueueToken.status == "checked_in",
+                QueueToken.issued_at >= today_start,
+            )
+        )
+        .order_by(QueueToken.issued_at.desc())
+        .limit(1)
+    )).scalars().first()
+    if token:
+        token.status = "completed"
+        token.completed_at = datetime.now(timezone.utc)
 
 
 @router.post("", response_model=VisitRead, status_code=status.HTTP_201_CREATED)
@@ -163,12 +185,15 @@ async def transition_visit_status(
     visit.status = payload.status
     if payload.status == "closed":
         visit.closed_at = datetime.now(timezone.utc)
+        await _complete_queue_token(visit, session)
 
     await session.commit()
     await session.refresh(visit)
 
     # Broadcast visit stage change
     tenant = current_user.get("tenant_schema", "public")
+    if payload.status == "closed":
+        await ws_manager.broadcast(tenant, "queue:update", {"event": "token_completed", "patient_id": str(visit.patient_id)})
     await ws_manager.broadcast(tenant, "visit:update", {
         "event": "visit_status_changed",
         "visit_id": str(visit.id),
@@ -205,7 +230,7 @@ async def dispatch_visit(
     if not visit:
         raise HTTPException(status_code=404, detail="Visit not found")
 
-    _DISPATCH_ALLOWED = {"prescription_done", "dispatched_pharmacy", "dispatched_lab"}
+    _DISPATCH_ALLOWED = {"prescription_done", "dispatched_pharmacy", "dispatched_lab", "dispatched_both"}
     if visit.status not in _DISPATCH_ALLOWED:
         raise HTTPException(
             status_code=400,
@@ -215,6 +240,7 @@ async def dispatch_visit(
     if payload.action == "close":
         visit.status = "closed"
         visit.closed_at = datetime.now(timezone.utc)
+        await _complete_queue_token(visit, session)
 
     elif payload.action == "billing":
         visit.status = "billing_pending"
@@ -231,7 +257,9 @@ async def dispatch_visit(
         )).scalar_one_or_none()
         if not existing_pq:
             session.add(PharmacyQueue(id=uuid.uuid4(), prescription_id=rx.id, status="pending"))
-        visit.status = "dispatched_pharmacy"
+        # If lab was already dispatched, both are now done
+        visit.status = "dispatched_both" if visit.status == "dispatched_lab" else "dispatched_pharmacy"
+        await _complete_queue_token(visit, session)
 
     elif payload.action == "lab":
         lab_order = (await session.execute(
@@ -240,8 +268,9 @@ async def dispatch_visit(
         if not lab_order:
             raise HTTPException(status_code=400, detail="No lab order found for this visit — doctor must add lab tests first")
         lab_order.status = "sample_collected"
-        visit.status = "dispatched_lab"
-        # No auto-close: nurse decides when to close the visit
+        # If pharmacy was already dispatched, both are now done
+        visit.status = "dispatched_both" if visit.status == "dispatched_pharmacy" else "dispatched_lab"
+        await _complete_queue_token(visit, session)
 
     await session.commit()
     await session.refresh(visit)
@@ -253,6 +282,10 @@ async def dispatch_visit(
         "action": payload.action,
         "status": visit.status,
     })
+    if payload.action == "close":
+        await ws_manager.broadcast(tenant, "queue:update", {"event": "token_completed", "patient_id": str(visit.patient_id)})
+    if payload.action in ("pharmacy", "lab"):
+        await ws_manager.broadcast(tenant, "queue:update", {"event": "token_completed", "patient_id": str(visit.patient_id)})
     if payload.action == "pharmacy":
         await ws_manager.broadcast(tenant, "pharmacy:update", {
             "event": "pharmacy_queue_created",
