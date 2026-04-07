@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     # Application
     APP_NAME: str = "Smart Hospital OPD"
     ENVIRONMENT: str = "development"
-    DEBUG: bool = True
+    DEBUG: bool = False
 
     # Security
     SECRET_KEY: str
@@ -24,10 +24,21 @@ class Settings(BaseSettings):
     # CORS
     ALLOWED_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
 
+    # Razorpay (optional — for online payments)
+    RAZORPAY_KEY_ID: str = ""               # rzp_test_... or rzp_live_...
+    RAZORPAY_KEY_SECRET: str = ""
+    RAZORPAY_WEBHOOK_SECRET: str = ""       # set in Razorpay dashboard webhook settings
+
+    # Cloudinary (optional — for lab report file storage)
+    CLOUDINARY_CLOUD_NAME: str = ""
+    CLOUDINARY_API_KEY: str = ""
+    CLOUDINARY_API_SECRET: str = ""
+
     # Notifications (optional)
     TWILIO_ACCOUNT_SID: str = ""
     TWILIO_AUTH_TOKEN: str = ""
-    TWILIO_FROM_NUMBER: str = ""
+    TWILIO_SMS_FROM_NUMBER: str = ""
+    TWILIO_WHATSAPP_FROM: str = ""          # e.g. whatsapp:+14155238886
 
     model_config = SettingsConfigDict(
         env_file=".env",

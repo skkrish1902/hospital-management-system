@@ -17,6 +17,7 @@ from app.core.dependencies import require_role
 from app.db.engine import get_session
 from app.models.tenant.appointment import Appointment
 from app.models.tenant.doctor import Doctor
+from app.models.tenant.invoice import Invoice
 from app.models.tenant.patient import Patient
 from app.models.tenant.queue_token import QueueToken
 from app.models.tenant.visit import Visit
@@ -25,27 +26,30 @@ from app.schemas.appointment import (
     AppointmentRead,
     AppointmentReschedule,
     AppointmentStatusUpdate,
+    CheckInBody,
     CheckInResult,
     SlotInfo,
 )
+from app.core.razorpay_service import create_razorpay_order
 from app.websocket.manager import ws_manager
 
 router = APIRouter()
 
-# Clinic operating hours (UTC+5:30 handled by caller; backend stores UTC)
+# Clinic operating hours — slots are generated in IST (UTC+5:30) and stored as UTC.
 _SLOT_DURATION_MINUTES = 15
-_DAY_START_HOUR = 9   # 09:00 local = stored as-is (naive datetime in DB)
-_DAY_END_HOUR = 17    # 17:00
+_DAY_START_HOUR = 9   # 09:00 IST
+_DAY_END_HOUR = 17    # 17:00 IST
 _VALID_CHECK_IN_STATUSES = {"scheduled", "confirmed"}
+_IST = timezone(timedelta(hours=5, minutes=30))
 
 
 def _build_slot_times(target_date: date) -> List[datetime]:
-    """Generate all 15-min slot datetimes for a given calendar date."""
+    """Generate all 15-min slot datetimes for a given calendar date in IST, stored as UTC."""
     slots = []
-    current = datetime.combine(target_date, time(_DAY_START_HOUR, 0), tzinfo=timezone.utc)
-    end = datetime.combine(target_date, time(_DAY_END_HOUR, 0), tzinfo=timezone.utc)
+    current = datetime.combine(target_date, time(_DAY_START_HOUR, 0), tzinfo=_IST)
+    end = datetime.combine(target_date, time(_DAY_END_HOUR, 0), tzinfo=_IST)
     while current < end:
-        slots.append(current)
+        slots.append(current.astimezone(timezone.utc))
         current += timedelta(minutes=_SLOT_DURATION_MINUTES)
     return slots
 
@@ -55,6 +59,7 @@ async def _enrich(appt: Appointment, session: AsyncSession) -> AppointmentRead:
     patient = await session.get(Patient, appt.patient_id)
     if patient:
         read.patient_name = f"{patient.first_name} {patient.last_name}"
+        read.patient_uhid = patient.uhid
     doctor = await session.get(Doctor, appt.doctor_id)
     if doctor:
         read.doctor_name = doctor.full_name
@@ -76,8 +81,8 @@ async def list_appointments(
 ):
     stmt = select(Appointment).order_by(Appointment.slot_time)
     if appt_date:
-        day_start = datetime.combine(appt_date, time.min, tzinfo=timezone.utc)
-        day_end = datetime.combine(appt_date, time.max, tzinfo=timezone.utc)
+        day_start = datetime.combine(appt_date, time(_DAY_START_HOUR, 0), tzinfo=_IST).astimezone(timezone.utc)
+        day_end = datetime.combine(appt_date, time(_DAY_END_HOUR, 0), tzinfo=_IST).astimezone(timezone.utc)
         stmt = stmt.where(and_(
             Appointment.slot_time >= day_start,
             Appointment.slot_time <= day_end,
@@ -104,8 +109,9 @@ async def get_slots(
     )),
 ):
     all_slots = _build_slot_times(slot_date)
-    day_start = datetime.combine(slot_date, time.min, tzinfo=timezone.utc)
-    day_end = datetime.combine(slot_date, time.max, tzinfo=timezone.utc)
+    # Day boundaries in IST to correctly bracket all clinic slots for the selected date
+    day_start = datetime.combine(slot_date, time(_DAY_START_HOUR, 0), tzinfo=_IST).astimezone(timezone.utc)
+    day_end = datetime.combine(slot_date, time(_DAY_END_HOUR, 0), tzinfo=_IST).astimezone(timezone.utc)
 
     booked_stmt = select(Appointment.slot_time).where(
         and_(
@@ -157,6 +163,7 @@ async def book_appointment(
     appt = Appointment(
         id=uuid.uuid4(),
         patient_id=payload.patient_id,
+        uhid=patient.uhid,
         doctor_id=payload.doctor_id,
         slot_time=payload.slot_time,
         type=payload.type,
@@ -282,6 +289,7 @@ async def cancel_appointment(
 @router.post("/{appt_id}/checkin", response_model=CheckInResult)
 async def checkin_appointment(
     appt_id: uuid.UUID,
+    body: CheckInBody = CheckInBody(),
     session: AsyncSession = Depends(get_session),
     current_user: dict = Depends(require_role(
         "receptionist", "hospital_admin", "super_admin",
@@ -333,16 +341,55 @@ async def checkin_appointment(
     doctor = await session.get(Doctor, appt.doctor_id)
     department_id = doctor.department_id if doctor else None
 
+    # Determine whether consultation fee applies
+    consultation_fee = float(doctor.consultation_fee) if doctor and doctor.consultation_fee else 0.0
+    needs_payment = consultation_fee > 0 and not body.waive_fee
+    visit_status = "pre_billing" if needs_payment else "registered"
+
     # Create Visit
     visit = Visit(
         id=uuid.uuid4(),
         patient_id=appt.patient_id,
+        uhid=patient.uhid if patient else None,
         doctor_id=appt.doctor_id,
         appointment_id=appt_id,
         department_id=department_id,
-        status="registered",
+        status=visit_status,
     )
     session.add(visit)
+    await session.flush()  # ensure visit.id exists before invoice FK
+
+    # Create Invoice (draft) if fee applies, or ₹0 paid record if waived
+    invoice = None
+    now = datetime.now(timezone.utc)
+    if needs_payment and doctor:
+        invoice = Invoice(
+            id=uuid.uuid4(),
+            visit_id=visit.id,
+            uhid=patient.uhid if patient else None,
+            line_items=[{"description": f"Consultation Fee — Dr. {doctor.full_name}", "amount": consultation_fee}],
+            subtotal=consultation_fee,
+            discount=0.0,
+            tax=0.0,
+            total=consultation_fee,
+            status="draft",
+        )
+        session.add(invoice)
+    elif body.waive_fee and consultation_fee > 0 and doctor:
+        invoice = Invoice(
+            id=uuid.uuid4(),
+            visit_id=visit.id,
+            uhid=patient.uhid if patient else None,
+            line_items=[{"description": f"Follow-up Consultation — Dr. {doctor.full_name} (fee waived)", "amount": 0.0}],
+            subtotal=0.0,
+            discount=consultation_fee,
+            tax=0.0,
+            total=0.0,
+            status="paid",
+            payment_method="follow_up",
+            paid_at=now,
+        )
+        session.add(invoice)
 
     # Create QueueToken — numbered per department when available
     from app.api.v1.queue import _next_token_no
@@ -350,13 +397,16 @@ async def checkin_appointment(
     token = QueueToken(
         id=uuid.uuid4(),
         patient_id=appt.patient_id,
+        uhid=patient.uhid if patient else None,
         appointment_id=appt_id,
+        visit_id=visit.id,
         department_id=department_id,
+        doctor_id=appt.doctor_id,
         token_no=token_no,
         queue_type="consultation",
         priority=priority,
-        status="waiting",
-        issued_at=datetime.now(timezone.utc),
+        status="checked_in",
+        issued_at=now,
     )
     session.add(token)
 
@@ -367,8 +417,36 @@ async def checkin_appointment(
     await session.refresh(visit)
     await session.refresh(token)
 
-    # Broadcast real-time updates
     tenant = current_user.get("tenant_schema", "public")
+
+    # Razorpay order + POS broadcast if payment needed
+    if invoice and needs_payment and doctor:
+        razorpay_order = create_razorpay_order(
+            amount_rupees=consultation_fee,
+            receipt=str(invoice.id)[:40],
+            notes={
+                "tenant_schema": tenant,
+                "invoice_id": str(invoice.id),
+                "uhid": patient.uhid if patient else "",
+            },
+        )
+        if razorpay_order:
+            invoice.razorpay_order_id = razorpay_order["id"]
+            await session.commit()
+
+        await ws_manager.broadcast(tenant, "pos:payment", {
+            "event": "payment_request",
+            "razorpay_key_id": __import__("app.core.config", fromlist=["settings"]).settings.RAZORPAY_KEY_ID,
+            "razorpay_order_id": invoice.razorpay_order_id,
+            "invoice_id": str(invoice.id),
+            "amount": int(consultation_fee * 100),
+            "amount_display": f"₹{consultation_fee:.0f}",
+            "patient_name": f"{patient.first_name} {patient.last_name}" if patient else "",
+            "uhid": patient.uhid if patient else "",
+            "description": f"Consultation Fee — Dr. {doctor.full_name}",
+        })
+
+    # Broadcast real-time updates
     await ws_manager.broadcast(tenant, "queue:update", {
         "event": "token_issued",
         "token_id": str(token.id),
@@ -378,7 +456,6 @@ async def checkin_appointment(
         "priority": priority,
         "appointment_id": str(appt_id),
     })
-    # Also broadcast visit:update so NurseVitalsPage gets real-time notification
     await ws_manager.broadcast(tenant, "visit:update", {
         "event": "visit_registered",
         "visit_id": str(visit.id),
@@ -394,4 +471,6 @@ async def checkin_appointment(
         token_id=token.id,
         token_no=token_no,
         queue_type="consultation",
+        needs_payment=needs_payment,
+        invoice_id=invoice.id if invoice else None,
     )

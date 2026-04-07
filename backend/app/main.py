@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.db.engine import init_db
@@ -47,6 +49,11 @@ app.include_router(api_router, prefix="/api/v1")
 # WebSocket endpoint
 from app.websocket.router import ws_router  # noqa: E402
 app.include_router(ws_router)
+
+# Serve uploaded lab reports (and any future uploads)
+_uploads_dir = Path("/app/uploads")
+_uploads_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(_uploads_dir)), name="uploads")
 
 
 @app.get("/health", tags=["health"])

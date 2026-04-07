@@ -14,6 +14,14 @@ interface TokenResponse {
   token_type: string
 }
 
+function homeForRole(role: string): string {
+  if (role === 'doctor') return '/doctor/consultation'
+  if (role === 'nurse') return '/nurse/vitals'
+  if (role === 'pharmacist') return '/pharmacy'
+  if (role === 'lab_technician') return '/lab'
+  return '/dashboard'
+}
+
 export function useLogin() {
   const { setTokens } = useAuthStore()
   const navigate = useNavigate()
@@ -23,7 +31,9 @@ export function useLogin() {
       apiClient.post<TokenResponse>('/auth/login', payload).then((r) => r.data),
     onSuccess: (data) => {
       setTokens(data.access_token, data.refresh_token)
-      navigate('/', { replace: true })
+      // user is populated synchronously by setTokens via JWT parse
+      const role = useAuthStore.getState().user?.role ?? ''
+      navigate(homeForRole(role), { replace: true })
     },
   })
 }

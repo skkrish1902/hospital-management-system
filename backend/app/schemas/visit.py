@@ -26,6 +26,10 @@ class VisitRead(BaseModel):
     doctor_name: Optional[str] = None
     department_name: Optional[str] = None
     doctor_consultation_fee: Optional[float] = None  # pre-filled on billing page
+    # Queue token fields (today's token, if any)
+    priority: Optional[str] = None      # emergency | senior_citizen | normal
+    token_no: Optional[int] = None      # today's queue token number
+    has_lab_order: Optional[bool] = None  # True if a LabOrder exists for this visit
 
     model_config = {"from_attributes": True}
 

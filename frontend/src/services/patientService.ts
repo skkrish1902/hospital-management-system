@@ -1,5 +1,5 @@
 import apiClient from './apiClient'
-import type { Patient } from '@/types/common'
+import type { Patient, PatientHistoryItem } from '@/types/common'
 
 export interface PatientCreate {
   first_name: string
@@ -26,4 +26,7 @@ export const patientService = {
 
   update: (id: string, data: Partial<PatientCreate>) =>
     apiClient.patch<Patient>(`/patients/${id}`, data).then(r => r.data),
+
+  getHistory: (id: string) =>
+    apiClient.get<PatientHistoryItem[]>(`/patients/${id}/history`).then(r => r.data),
 }

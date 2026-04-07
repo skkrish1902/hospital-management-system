@@ -19,7 +19,15 @@ from app.db.engine import tenant_schema_var
 from app.core.security import decode_token
 
 
-_PUBLIC_PATHS = {"/health", "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/docs", "/api/redoc", "/api/openapi.json"}
+_PUBLIC_PATHS = {
+    "/health",
+    "/api/v1/auth/login",
+    "/api/v1/auth/refresh",
+    "/api/docs",
+    "/api/redoc",
+    "/api/openapi.json",
+    "/api/v1/billing/razorpay/webhook",  # Razorpay webhook — no JWT, tenant in payload
+}
 
 
 class TenantMiddleware(BaseHTTPMiddleware):

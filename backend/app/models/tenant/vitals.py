@@ -2,7 +2,7 @@ from typing import Optional
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, func
+from sqlalchemy import DateTime, Float, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -13,6 +13,7 @@ class Vitals(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     visit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("visits.id"), nullable=False, index=True)
+    uhid: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
     bp_systolic: Mapped[Optional[int]] = mapped_column()
     bp_diastolic: Mapped[Optional[int]] = mapped_column()
     temperature: Mapped[Optional[float]] = mapped_column(Float)  # Celsius

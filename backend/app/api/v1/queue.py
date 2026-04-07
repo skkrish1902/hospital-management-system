@@ -17,9 +17,11 @@ from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, require_role
+from app.core.razorpay_service import create_razorpay_order
 from app.db.engine import get_session
 from app.models.tenant.department import Department
 from app.models.tenant.doctor import Doctor
+from app.models.tenant.invoice import Invoice
 from app.models.tenant.patient import Patient
 from app.models.tenant.queue_token import QueueToken
 from app.models.tenant.visit import Visit
@@ -65,6 +67,7 @@ async def issue_token(
     token = QueueToken(
         id=uuid.uuid4(),
         patient_id=payload.patient_id,
+        uhid=patient.uhid,
         appointment_id=payload.appointment_id,
         department_id=payload.department_id,
         doctor_id=payload.doctor_id,
@@ -76,24 +79,101 @@ async def issue_token(
     )
     session.add(token)
 
+    # --- Determine consultation fee and whether to request upfront payment ---
+    doctor = await session.get(Doctor, payload.doctor_id) if payload.doctor_id else None
+    consultation_fee = float(doctor.consultation_fee) if doctor and doctor.consultation_fee else 0.0
+    needs_payment = consultation_fee > 0 and not payload.waive_fee
+
+    visit_status = "pre_billing" if needs_payment else "registered"
+
     # Auto-create Visit immediately on token issuance
     visit = Visit(
         id=uuid.uuid4(),
         patient_id=payload.patient_id,
+        uhid=patient.uhid,
         doctor_id=payload.doctor_id,
         appointment_id=payload.appointment_id,
         department_id=payload.department_id,
-        status="pre_billing",
+        status=visit_status,
     )
     session.add(visit)
+    # Flush visit so its PK exists in the DB before invoice FK references it
+    await session.flush()
+
+    # Persist visit_id on the token so list queries can surface payment status
+    token.visit_id = visit.id
+
+    # Auto-create Invoice with consultation fee line item
+    invoice = None
+    if needs_payment:
+        invoice = Invoice(
+            id=uuid.uuid4(),
+            visit_id=visit.id,
+            uhid=patient.uhid,
+            line_items=[{"description": f"Consultation Fee — Dr. {doctor.full_name}", "amount": consultation_fee}],
+            subtotal=consultation_fee,
+            discount=0.0,
+            tax=0.0,
+            total=consultation_fee,
+            status="draft",
+        )
+        session.add(invoice)
+    elif payload.waive_fee and consultation_fee > 0:
+        # Follow-up within 7 days — create a ₹0 paid invoice for record-keeping
+        invoice = Invoice(
+            id=uuid.uuid4(),
+            visit_id=visit.id,
+            uhid=patient.uhid,
+            line_items=[{
+                "description": f"Follow-up Consultation — Dr. {doctor.full_name} (fee waived)",
+                "amount": 0.0,
+            }],
+            subtotal=0.0,
+            discount=consultation_fee,  # shows the waived amount as a discount
+            tax=0.0,
+            total=0.0,
+            status="paid",
+            payment_method="follow_up",
+            paid_at=now,
+        )
+        session.add(invoice)
 
     await session.commit()
     await session.refresh(token)
 
     dept = await session.get(Department, payload.department_id) if payload.department_id else None
-    doctor = await session.get(Doctor, payload.doctor_id) if payload.doctor_id else None
+    if not doctor:  # may have been fetched above already; re-fetch only if None
+        doctor = await session.get(Doctor, payload.doctor_id) if payload.doctor_id else None
 
     tenant = current_user.get("tenant_schema", "public")
+
+    # Create Razorpay order and push to POS screen (if payment needed)
+    if invoice and needs_payment:
+        razorpay_order = create_razorpay_order(
+            amount_rupees=consultation_fee,
+            receipt=str(invoice.id)[:40],
+            notes={
+                "tenant_schema": tenant,
+                "invoice_id": str(invoice.id),
+                "uhid": patient.uhid,
+            },
+        )
+        if razorpay_order:
+            invoice.razorpay_order_id = razorpay_order["id"]
+            await session.commit()
+
+        await ws_manager.broadcast(tenant, "pos:payment", {
+            "event": "payment_request",
+            "razorpay_key_id": __import__("app.core.config", fromlist=["settings"]).settings.RAZORPAY_KEY_ID,
+            "razorpay_order_id": invoice.razorpay_order_id,
+            "invoice_id": str(invoice.id),
+            "amount": int(consultation_fee * 100),  # paise
+            "amount_display": f"₹{consultation_fee:.0f}",
+            "patient_name": f"{patient.first_name} {patient.last_name}",
+            "uhid": patient.uhid,
+            "description": f"Consultation Fee — Dr. {doctor.full_name}" if doctor else "Consultation Fee",
+        })
+
     await ws_manager.broadcast(tenant, "queue:update", {
         "event": "token_issued",
         "queue_type": token.queue_type,

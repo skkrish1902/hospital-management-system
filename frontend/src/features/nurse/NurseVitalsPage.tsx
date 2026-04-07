@@ -22,10 +22,19 @@ import { useWebSocket } from '@/hooks/useWebSocket'
 import { printPrescription } from '@/utils/printPrescription'
 import type { Visit } from '@/types/common'
 
+function PriorityBadge({ priority }: { priority?: string }) {
+  if (!priority || priority === 'normal') return null
+  if (priority === 'emergency')
+    return <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-semibold border border-red-200">🚨 Emergency</span>
+  if (priority === 'senior_citizen')
+    return <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold border border-amber-200">👴 Senior</span>
+  return null
+}
+
 const vitalsSchema = z.object({
   bp_systolic: z.coerce.number().int().min(40).max(300).optional().or(z.literal('')),
   bp_diastolic: z.coerce.number().int().min(20).max(200).optional().or(z.literal('')),
-  temperature: z.coerce.number().min(30).max(45).optional().or(z.literal('')),
+  temperature: z.coerce.number().min(86).max(113.9).optional().or(z.literal('')),
   weight: z.coerce.number().min(1).max(500).optional().or(z.literal('')),
   height: z.coerce.number().min(30).max(250).optional().or(z.literal('')),
   spo2: z.coerce.number().int().min(1).max(100).optional().or(z.literal('')),
@@ -69,7 +78,6 @@ export default function NurseVitalsPage() {
 
   const deptId = myDepts.length === 1 ? myDepts[0].department_id : activeDeptId
 
-  // ── Vitals tab queries ───────────────────────────────────────────────────────
   const { data: registeredVisits = [], refetch: refetchRegistered } = useQuery({
     queryKey: ['visits', 'registered', deptId],
     queryFn: () => visitService.list({ status: 'registered', department_id: deptId }),
@@ -223,7 +231,9 @@ export default function NurseVitalsPage() {
       visit_id: selectedVisit.id,
       bp_systolic: clean(values.bp_systolic),
       bp_diastolic: clean(values.bp_diastolic),
-      temperature: clean(values.temperature),
+      temperature: clean(values.temperature) !== undefined
+        ? Math.round(((clean(values.temperature)! - 32) * 5 / 9) * 10) / 10
+        : undefined,
       weight: clean(values.weight),
       height: clean(values.height),
       spo2: clean(values.spo2),
@@ -287,9 +297,17 @@ export default function NurseVitalsPage() {
                   >
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="font-medium text-gray-900 text-sm">{v.patient_name || 'Patient'}</p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {v.token_no && (
+                            <span className="text-xs font-bold text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                              #{v.token_no}
+                            </span>
+                          )}
+                          <p className="font-medium text-gray-900 text-sm">{v.patient_name || 'Patient'}</p>
+                          <PriorityBadge priority={v.priority} />
+                        </div>
                         <p className="text-xs text-gray-400 mt-0.5">
-                          {v.doctor_name ? `Dr. ${v.doctor_name}` : 'Unassigned'} · {new Date(v.created_at).toLocaleTimeString()}
+                          {v.department_name || ''}{v.department_name ? ' · ' : ''}{v.doctor_name ? `Dr. ${v.doctor_name}` : 'Unassigned'} · {new Date(v.created_at).toLocaleTimeString()}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
@@ -319,8 +337,8 @@ export default function NurseVitalsPage() {
                         </VitalField>
                       </div>
                       <div className="grid grid-cols-2 gap-3">
-                        <VitalField label="Temperature (°C)" error={errors.temperature?.message}>
-                          <input {...register('temperature')} type="number" step="0.1" placeholder="37.0" className={inputCls(false)} />
+                        <VitalField label="Temperature (°F)" error={errors.temperature?.message}>
+                          <input {...register('temperature')} type="number" step="0.1" placeholder="98.6" className={inputCls(false)} />
                         </VitalField>
                         <VitalField label="SpO₂ (%)" error={errors.spo2?.message}>
                           <input {...register('spo2')} type="number" placeholder="98" className={inputCls(false)} />
@@ -367,9 +385,17 @@ export default function NurseVitalsPage() {
                 {vitalsRecordedVisits.map(v => (
                   <div key={v.id} className="flex items-center justify-between px-4 py-3">
                     <div>
-                      <p className="font-medium text-gray-900 text-sm">{v.patient_name || 'Patient'}</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {v.token_no && (
+                          <span className="text-xs font-bold text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                            #{v.token_no}
+                          </span>
+                        )}
+                        <p className="font-medium text-gray-900 text-sm">{v.patient_name || 'Patient'}</p>
+                        <PriorityBadge priority={v.priority} />
+                      </div>
                       <p className="text-xs text-gray-400 mt-0.5">
-                        {v.doctor_name ? `Dr. ${v.doctor_name}` : 'Unassigned'} · {new Date(v.created_at).toLocaleTimeString()}
+                        {v.department_name || ''}{v.department_name ? ' · ' : ''}{v.doctor_name ? `Dr. ${v.doctor_name}` : 'Unassigned'} · {new Date(v.created_at).toLocaleTimeString()}
                       </p>
                     </div>
                     <button
@@ -387,6 +413,7 @@ export default function NurseVitalsPage() {
               </div>
             </div>
           )}
+
         </div>
 
         {/* RIGHT: Dispatch Queue + Completed */}
@@ -400,7 +427,7 @@ export default function NurseVitalsPage() {
             </div>
           ) : dispatchVisits.map(v => {
             const canPharmacy = v.status === 'prescription_done' || v.status === 'dispatched_lab'
-            const canLab = v.status === 'prescription_done' || v.status === 'dispatched_pharmacy'
+            const canLab = (v.status === 'prescription_done' || v.status === 'dispatched_pharmacy') && v.has_lab_order === true
             const badge = statusBadge(v.status)
             return (
               <div key={v.id} className="bg-white rounded-xl border border-gray-200 p-5">

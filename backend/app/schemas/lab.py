@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -24,18 +24,22 @@ class LabOrderRead(BaseModel):
     # Joined
     patient_name: Optional[str] = None
     doctor_name: Optional[str] = None
+    result: Optional["LabResultRead"] = None
 
     model_config = {"from_attributes": True}
 
 
 class LabResultCreate(BaseModel):
-    results: dict  # free-form JSON: {"CBC": "Normal", "HbA1c": "5.6%", ...}
+    results: Optional[Dict[str, Any]] = None
+    notes: Optional[str] = None
 
 
 class LabResultRead(BaseModel):
     id: uuid.UUID
     lab_order_id: uuid.UUID
-    results: Optional[dict] = None
+    results: Optional[Dict[str, Any]] = None
+    notes: Optional[str] = None
+    report_url: Optional[str] = None
     reported_by_user_id: Optional[uuid.UUID] = None
     reported_at: datetime
 

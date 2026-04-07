@@ -86,6 +86,23 @@ export default function BillingPage() {
     },
   })
 
+  const { mutate: syncPayment, isPending: syncing, error: syncError, reset: resetSync } = useMutation({
+    mutationFn: () => billingService.syncPayment(invoice!.id),
+    onSuccess: (paid) => {
+      setInvoice(paid)
+      setStep('paid')
+      qc.invalidateQueries({ queryKey: ['visits'] })
+    },
+  })
+
+  // Auto-sync when confirm step opens and invoice was created via Razorpay (POS kiosk)
+  useEffect(() => {
+    if (step === 'confirm' && invoice?.razorpay_order_id && invoice?.status === 'draft') {
+      syncPayment()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, invoice?.id])
+
   const addRow = () => setLineItems(prev => [...prev, { description: '', amount: '' }])
   const updateRow = (i: number, field: 'description' | 'amount', val: string) =>
     setLineItems(prev => prev.map((r, idx) => idx === i ? { ...r, [field]: val } : r))
@@ -125,7 +142,10 @@ export default function BillingPage() {
           </div>
           <h2 className="text-xl font-bold text-green-800 mb-2">Payment Received</h2>
           <p className="text-green-700 text-sm mb-1">
-            ₹{invoice.total.toFixed(2)} paid via <span className="font-semibold capitalize">{invoice.payment_method}</span>
+            {invoice.payment_method === 'follow_up'
+              ? <span className="font-semibold">Free follow-up — consultation fee waived</span>
+              : <>₹{invoice.total.toFixed(2)} paid via <span className="font-semibold capitalize">{invoice.payment_method?.replace('_', ' ')}</span></>
+            }
           </p>
           <p className="text-xs text-green-600">
             {returnTo === 'queue'
@@ -253,6 +273,30 @@ export default function BillingPage() {
               ))}
             </div>
           </div>
+
+          {/* Razorpay sync — shown only when Razorpay order exists and payment may have been missed */}
+          {invoice.razorpay_order_id && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+              {syncing ? (
+                <p className="text-xs text-amber-800 font-medium">Checking Razorpay for payment…</p>
+              ) : syncError ? (
+                <>
+                  <p className="text-xs text-amber-800 font-medium mb-1">Payment not confirmed on Razorpay yet.</p>
+                  <p className="text-xs text-red-600 mb-2">
+                    {(syncError as any)?.response?.data?.detail ?? 'No captured payment found.'}
+                  </p>
+                  <button
+                    onClick={() => { resetSync(); syncPayment() }}
+                    className="text-xs bg-amber-600 text-white px-3 py-1.5 rounded-lg hover:bg-amber-700 font-medium"
+                  >
+                    Retry Sync
+                  </button>
+                </>
+              ) : (
+                <p className="text-xs text-amber-800 font-medium">Checking Razorpay for payment…</p>
+              )}
+            </div>
+          )}
 
           <div className="flex gap-3">
             <button onClick={() => setStep('build')}

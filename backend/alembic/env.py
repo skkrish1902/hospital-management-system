@@ -40,7 +40,8 @@ database_url = os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url"
 if database_url and not database_url.startswith("postgresql+asyncpg"):
     database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-config.set_main_option("sqlalchemy.url", database_url)
+# Escape % for configparser interpolation (e.g. passwords containing special chars)
+config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 

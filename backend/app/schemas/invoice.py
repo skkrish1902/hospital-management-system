@@ -32,6 +32,8 @@ class InvoiceRead(BaseModel):
     payment_method: Optional[str] = None
     status: str
     paid_at: Optional[datetime] = None
+    razorpay_order_id: Optional[str] = None
+    razorpay_payment_id: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

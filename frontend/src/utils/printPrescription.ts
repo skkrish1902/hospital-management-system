@@ -1,5 +1,21 @@
 import type { Visit, Prescription, Consultation } from '@/types/common'
 
+const FREQUENCY_LABELS: Record<string, string> = {
+  OD:  'Once Daily',
+  BD:  'Twice Daily',
+  TID: 'Three Times a Day',
+  QID: 'Four Times a Day',
+  SOS: 'As Needed',
+  QHS: 'Every Night at Bedtime',
+  Q4H: 'Every 4 Hours',
+  Q6H: 'Every 6 Hours',
+  Q8H: 'Every 8 Hours',
+}
+
+function expandFrequency(freq: string): string {
+  return FREQUENCY_LABELS[freq] ?? freq
+}
+
 export function printPrescription(
   visit: Visit,
   prescription: Prescription | null,
@@ -21,7 +37,7 @@ export function printPrescription(
             <span class="item-num">${i + 1}.</span>
             <div>
               <strong>${m.name}</strong>
-              <div class="medicine-detail">${[m.dose || m.dosage, m.route, m.frequency, m.duration].filter(Boolean).join(' · ')}${(m.instructions || m.notes) ? ' · <em>' + (m.instructions || m.notes) + '</em>' : ''}</div>
+              <div class="medicine-detail">${[m.dose || m.dosage, m.route, expandFrequency(m.frequency), m.duration].filter(Boolean).join(' · ')}${(m.instructions || m.notes) ? ' · <em>' + (m.instructions || m.notes) + '</em>' : ''}</div>
             </div>
           </div>`).join('')}
       </div>`

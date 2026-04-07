@@ -44,6 +44,15 @@ export const billingService = {
 
   pay: (invoiceId: string, payment_method: string) =>
     apiClient.post<Invoice>(`/billing/${invoiceId}/pay`, { payment_method }).then(r => r.data),
+
+  syncPayment: (invoiceId: string) =>
+    apiClient.post<Invoice>(`/billing/${invoiceId}/sync-payment`).then(r => r.data),
+
+  resendPos: (invoiceId: string) =>
+    apiClient.post<Invoice>(`/billing/${invoiceId}/resend-pos`).then(r => r.data),
+
+  admitPatient: (invoiceId: string) =>
+    apiClient.post<Invoice>(`/billing/${invoiceId}/admit-patient`).then(r => r.data),
 }
 
 export const doctorService = {
@@ -136,7 +145,7 @@ export const appointmentService = {
     patient_id: string
     doctor_id: string
     slot_time: string
-    type?: 'walkin' | 'pre_booked'
+    type?: 'walkin' | 'phone' | 'online'
     notes?: string
   }) => apiClient.post<Appointment>('/appointments', data).then(r => r.data),
 
@@ -149,6 +158,6 @@ export const appointmentService = {
   cancel: (id: string) =>
     apiClient.patch<Appointment>(`/appointments/${id}/cancel`, {}).then(r => r.data),
 
-  checkin: (id: string) =>
-    apiClient.post<CheckInResult>(`/appointments/${id}/checkin`, {}).then(r => r.data),
+  checkin: (id: string, waive_fee = false) =>
+    apiClient.post<CheckInResult>(`/appointments/${id}/checkin`, { waive_fee }).then(r => r.data),
 }

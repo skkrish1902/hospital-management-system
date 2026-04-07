@@ -2,7 +2,7 @@ from typing import Optional
 import uuid
 from datetime import date
 
-from sqlalchemy import Date, ForeignKey, Text
+from sqlalchemy import Date, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,6 +14,7 @@ class Consultation(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     visit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("visits.id"), nullable=False, unique=True, index=True)
+    uhid: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
     chief_complaint: Mapped[Optional[str]] = mapped_column(Text)
     history: Mapped[Optional[str]] = mapped_column(Text)
     examination: Mapped[Optional[str]] = mapped_column(Text)

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_role
 from app.db.engine import get_session
+from app.models.tenant.patient import Patient
 from app.models.tenant.visit import Visit
 from app.models.tenant.vitals import Vitals
 from app.schemas.vitals import VitalsCreate, VitalsRead
@@ -27,8 +28,10 @@ async def record_vitals(
     if not visit:
         raise HTTPException(status_code=404, detail="Visit not found")
 
+    patient = await session.get(Patient, visit.patient_id)
     vitals = Vitals(
         id=uuid.uuid4(),
+        uhid=patient.uhid if patient else None,
         recorded_by_user_id=uuid.UUID(current_user["sub"]),
         **payload.model_dump(),
     )

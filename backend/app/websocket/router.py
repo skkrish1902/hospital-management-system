@@ -23,10 +23,14 @@ _ALLOWED_CHANNELS = {
     "visit:update",
     "pharmacy:update",
     "lab:update",
+    "pos:payment",    # POS kiosk screen — payment request/success events
 }
 
-# Channels accessible without a JWT (public display boards)
-_PUBLIC_CHANNELS = {"queue:update"}
+# Channels accessible without a JWT (public display boards / kiosks)
+_PUBLIC_CHANNELS = {
+    "queue:update",   # ?token=display  (TV display boards)
+    "pos:payment",    # ?token=kiosk    (PAX A920 / payment kiosk)
+}
 
 
 @ws_router.websocket("/ws/{tenant_schema}/{channel}")
@@ -47,7 +51,8 @@ async def websocket_endpoint(
         return
 
     # Allow display boards without a real JWT (read-only, queue:update only)
-    if token == "display":
+    # Allow kiosk devices without a real JWT (pos:payment only)
+    if token in ("display", "kiosk"):
         if channel not in _PUBLIC_CHANNELS:
             await websocket.close(code=4003)
             return

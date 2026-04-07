@@ -8,6 +8,7 @@ export interface QueueTokenCreate {
   doctor_id?: string
   queue_type?: string
   priority?: string
+  waive_fee?: boolean
 }
 
 export interface QueueTokenUpdate {

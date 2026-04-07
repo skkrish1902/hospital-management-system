@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import require_role
 from app.db.engine import get_session
 from app.models.tenant.lab_order import LabOrder
+from app.models.tenant.patient import Patient
 from app.models.tenant.prescription import Prescription
 from app.models.tenant.visit import Visit
 from app.schemas.prescription import PrescriptionCreate, PrescriptionRead, PrescriptionUpdate
@@ -28,26 +29,49 @@ async def create_prescription(
     if not visit:
         raise HTTPException(status_code=404, detail="Visit not found")
 
+    patient = await session.get(Patient, visit.patient_id)
+    uhid = patient.uhid if patient else None
+
     medicines_data = (
         [m.model_dump() for m in payload.medicines] if payload.medicines else None
     )
-    prescription = Prescription(
-        id=uuid.uuid4(),
-        visit_id=payload.visit_id,
-        medicines=medicines_data,
-        instructions=payload.instructions,
-    )
-    session.add(prescription)
 
-    # If doctor included lab tests, create a LabOrder alongside the prescription
-    if payload.lab_tests:
-        lab_order = LabOrder(
+    # Upsert — each visit has at most one prescription
+    existing_rx = (await session.execute(
+        select(Prescription).where(Prescription.visit_id == payload.visit_id).limit(1)
+    )).scalar_one_or_none()
+
+    if existing_rx:
+        existing_rx.medicines = medicines_data
+        existing_rx.instructions = payload.instructions
+        prescription = existing_rx
+    else:
+        prescription = Prescription(
             id=uuid.uuid4(),
             visit_id=payload.visit_id,
-            tests=[t.model_dump() for t in payload.lab_tests],
-            status="ordered",
+            uhid=uhid,
+            medicines=medicines_data,
+            instructions=payload.instructions,
         )
-        session.add(lab_order)
+        session.add(prescription)
+
+    # If doctor included lab tests, upsert a LabOrder alongside the prescription
+    if payload.lab_tests:
+        existing_order = (await session.execute(
+            select(LabOrder).where(LabOrder.visit_id == payload.visit_id).limit(1)
+        )).scalar_one_or_none()
+        if existing_order:
+            existing_order.tests = [t.model_dump() for t in payload.lab_tests]
+            existing_order.status = "ordered"
+        else:
+            lab_order = LabOrder(
+                id=uuid.uuid4(),
+                visit_id=payload.visit_id,
+                uhid=uhid,
+                tests=[t.model_dump() for t in payload.lab_tests],
+                status="ordered",
+            )
+            session.add(lab_order)
 
     # Advance visit status after prescription is written
     if visit.status == "in_consultation":

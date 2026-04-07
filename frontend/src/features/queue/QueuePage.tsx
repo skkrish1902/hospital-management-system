@@ -4,8 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { queueService } from '@/services/queueService'
 import { patientService } from '@/services/patientService'
-import { departmentService, doctorService } from '@/services/clinicalService'
-import type { Doctor, Patient, QueueToken } from '@/types/common'
+import { departmentService, doctorService, billingService } from '@/services/clinicalService'
+import type { Doctor, Patient, QueueToken, Invoice } from '@/types/common'
 
 const PRIORITY_BADGE: Record<string, string> = {
   emergency: 'bg-red-100 text-red-700',
@@ -21,12 +21,17 @@ const STATUS_BADGE: Record<string, string> = {
 
 export default function QueuePage() {
   const [issueForm, setIssueForm] = useState(false)
+  const [issueStep, setIssueStep] = useState<'form' | 'confirm'>('form')
   const [patientSearch, setPatientSearch] = useState('')
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
   const [priority, setPriority] = useState('normal')
   const [selectedDeptId, setSelectedDeptId] = useState<string>('')
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>('')
   const [filterDeptId, setFilterDeptId] = useState<string>('')
+  const [waiveFee, setWaiveFee] = useState(false)
+  const [payMode, setPayMode] = useState<'cash' | 'online'>('cash')
+  const [showCompleted, setShowCompleted] = useState(false)
+  const [showCancelled, setShowCancelled] = useState(false)
 
   // Edit modal
   const [editToken, setEditToken] = useState<QueueToken | null>(null)
@@ -60,6 +65,13 @@ export default function QueuePage() {
     staleTime: 10_000,
   })
 
+  const { data: lastVisitHistory = [] } = useQuery({
+    queryKey: ['patient-last-visit', selectedPatient?.id],
+    queryFn: () => patientService.getHistory(selectedPatient!.id),
+    enabled: !!selectedPatient && issueStep === 'confirm',
+    staleTime: 60_000,
+  })
+
   const { data: deptDoctors = [] } = useQuery<Doctor[]>({
     queryKey: ['doctors', 'by-dept', selectedDeptId],
     queryFn: () => doctorService.list({ department_id: selectedDeptId }),
@@ -75,14 +87,21 @@ export default function QueuePage() {
   })
 
   useWebSocket('queue:update', useCallback(() => { refetch() }, [refetch]))
+  useWebSocket('pos:payment', useCallback(() => {
+    refetch()
+    qc.invalidateQueries({ queryKey: ['invoice-by-visit'] })
+  }, [refetch, qc]))
 
   const closeIssue = () => {
     setIssueForm(false)
+    setIssueStep('form')
     setSelectedPatient(null)
     setPatientSearch('')
     setPriority('normal')
     setSelectedDeptId('')
     setSelectedDoctorId('')
+    setWaiveFee(false)
+    setPayMode('cash')
   }
 
   const { mutate: issueToken, isPending: issuing } = useMutation({
@@ -92,12 +111,16 @@ export default function QueuePage() {
       department_id: selectedDeptId || undefined,
       doctor_id: selectedDoctorId || undefined,
       priority,
+      waive_fee: waiveFee,
     }),
     onSuccess: (token) => {
       qc.invalidateQueries({ queryKey: ['queue'] })
       closeIssue()
-      if (token.visit_id) {
-        navigate(`/billing?visitId=${token.visit_id}&returnTo=queue`)
+      if (token.visit_id && !waiveFee) {
+        if (payMode === 'cash') {
+          navigate(`/billing?visitId=${token.visit_id}&returnTo=queue`)
+        }
+        // online: POS kiosk triggered by backend — stay on queue page
       }
     },
   })
@@ -121,9 +144,35 @@ export default function QueuePage() {
     },
   })
 
+  // ── Payment recovery actions (receptionist) ────────────────────────────────
+  const { mutate: resendPos } = useMutation({
+    mutationFn: (invoiceId: string) => billingService.resendPos(invoiceId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoice-by-visit'] }),
+  })
+
+  const { mutate: admitPatient } = useMutation({
+    mutationFn: (invoiceId: string) => billingService.admitPatient(invoiceId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['queue'] })
+      qc.invalidateQueries({ queryKey: ['invoice-by-visit'] })
+    },
+  })
+
+  const { mutate: syncAndAdmit } = useMutation({
+    mutationFn: (invoiceId: string) => billingService.syncPayment(invoiceId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['queue'] })
+      qc.invalidateQueries({ queryKey: ['invoice-by-visit'] })
+    },
+  })
+
   const checkedIn = tokens.filter(t => t.status === 'checked_in').length
   const completed = tokens.filter(t => t.status === 'completed').length
   const cancelled = tokens.filter(t => t.status === 'cancelled').length
+
+  const activeTokens = tokens.filter(t => t.status !== 'completed' && t.status !== 'cancelled')
+  const completedTokens = tokens.filter(t => t.status === 'completed')
+  const cancelledTokens = tokens.filter(t => t.status === 'cancelled')
 
   const openEdit = (token: QueueToken) => {
     setEditToken(token)
@@ -180,22 +229,22 @@ export default function QueuePage() {
         <StatCard label="Cancelled" value={cancelled} color="red" />
       </div>
 
-      {/* Token table */}
+      {/* Token table — active only */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
-              {['Token', 'Priority', 'Patient', 'Phone', 'Department', 'Doctor', 'Status', 'Issued', 'Actions'].map(h => (
+              {['Token', 'Priority', 'Patient', 'Phone', 'Department', 'Doctor', 'Status', 'Payment', 'Issued', 'Actions'].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {tokens.length === 0 ? (
+            {activeTokens.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-4 py-10 text-center text-gray-400">Queue is empty</td>
+                <td colSpan={10} className="px-4 py-10 text-center text-gray-400">No active tokens</td>
               </tr>
-            ) : tokens.map((token) => (
+            ) : activeTokens.map((token) => (
               <tr
                 key={token.id}
                 className={`hover:bg-gray-50 ${token.status === 'cancelled' ? 'opacity-60' : ''}`}
@@ -223,13 +272,26 @@ export default function QueuePage() {
                     )}
                   </span>
                 </td>
+                <td className="px-4 py-3">
+                  {token.visit_id
+                    ? <PaymentCell visitId={token.visit_id} />
+                    : <span className="text-xs text-gray-400">—</span>
+                  }
+                </td>
                 <td className="px-4 py-3 text-gray-400 text-xs">
                   {new Date(token.issued_at).toLocaleTimeString()}
                 </td>
                 <td className="px-4 py-3">
                   {token.status === 'checked_in' && (
-                    <div className="flex items-center gap-2">
-                      {/* Edit icon */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {token.visit_id && (
+                        <PaymentActions
+                          visitId={token.visit_id}
+                          onResendPos={resendPos}
+                          onSyncAndAdmit={syncAndAdmit}
+                          onAdmitManually={admitPatient}
+                        />
+                      )}
                       <button
                         onClick={() => openEdit(token)}
                         title="Edit token"
@@ -239,7 +301,6 @@ export default function QueuePage() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                         </svg>
                       </button>
-                      {/* Cancel icon */}
                       <button
                         onClick={() => openCancel(token)}
                         title="Cancel visit"
@@ -258,8 +319,119 @@ export default function QueuePage() {
         </table>
       </div>
 
+      {/* Completed records — collapsible */}
+      {completedTokens.length > 0 && (
+        <div className="border border-gray-200 rounded-xl overflow-hidden">
+          <button
+            onClick={() => setShowCompleted(v => !v)}
+            className="w-full flex items-center justify-between px-5 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-sm font-medium text-gray-700"
+          >
+            <span className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-green-500"></span>
+              Completed Today
+              <span className="ml-1 px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-semibold">{completedTokens.length}</span>
+            </span>
+            <svg
+              className={`w-4 h-4 text-gray-400 transition-transform ${showCompleted ? 'rotate-180' : ''}`}
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {showCompleted && (
+            <div className="bg-white overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    {['Token', 'Patient', 'Phone', 'Department', 'Doctor', 'Payment', 'Completed'].map(h => (
+                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {completedTokens.map(token => (
+                    <tr key={token.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3">
+                        <span className="text-lg font-bold text-gray-400 tabular-nums">{token.token_no}</span>
+                      </td>
+                      <td className="px-4 py-3 font-medium text-gray-700">{token.patient_name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-500 text-xs">{token.patient_phone || '—'}</td>
+                      <td className="px-4 py-3 text-gray-500 text-xs">{token.department_name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-500 text-xs">{token.doctor_name || '—'}</td>
+                      <td className="px-4 py-3">
+                        {token.visit_id
+                          ? <PaymentCell visitId={token.visit_id} />
+                          : <span className="text-xs text-gray-400">—</span>
+                        }
+                      </td>
+                      <td className="px-4 py-3 text-gray-400 text-xs">
+                        {new Date(token.issued_at).toLocaleTimeString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Cancelled records — collapsible */}
+      {cancelledTokens.length > 0 && (
+        <div className="border border-red-100 rounded-xl overflow-hidden">
+          <button
+            onClick={() => setShowCancelled(v => !v)}
+            className="w-full flex items-center justify-between px-5 py-3 bg-red-50 hover:bg-red-100 transition-colors text-sm font-medium text-red-700"
+          >
+            <span className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-red-400"></span>
+              Cancelled Today
+              <span className="ml-1 px-2 py-0.5 rounded-full bg-red-100 text-red-600 text-xs font-semibold">{cancelledTokens.length}</span>
+            </span>
+            <svg
+              className={`w-4 h-4 text-red-300 transition-transform ${showCancelled ? 'rotate-180' : ''}`}
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {showCancelled && (
+            <div className="bg-white overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    {['Token', 'Patient', 'Phone', 'Department', 'Doctor', 'Reason', 'Issued'].map(h => (
+                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {cancelledTokens.map(token => (
+                    <tr key={token.id} className="hover:bg-gray-50 opacity-75">
+                      <td className="px-4 py-3">
+                        <span className="text-lg font-bold text-red-300 tabular-nums">{token.token_no}</span>
+                      </td>
+                      <td className="px-4 py-3 font-medium text-gray-600">{token.patient_name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-400 text-xs">{token.patient_phone || '—'}</td>
+                      <td className="px-4 py-3 text-gray-400 text-xs">{token.department_name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-400 text-xs">{token.doctor_name || '—'}</td>
+                      <td className="px-4 py-3 text-xs text-red-500">{token.notes || '—'}</td>
+                      <td className="px-4 py-3 text-gray-400 text-xs">
+                        {new Date(token.issued_at).toLocaleTimeString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Issue Token Modal */}
-      {issueForm && (
+      {issueForm && issueStep === 'form' && (
         <div className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center p-4" onClick={closeIssue}>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-gray-100 flex items-center justify-between">
@@ -348,17 +520,147 @@ export default function QueuePage() {
                   Cancel
                 </button>
                 <button
-                  disabled={!selectedPatient || issuing}
-                  onClick={() => issueToken()}
+                  disabled={!selectedPatient}
+                  onClick={() => setIssueStep('confirm')}
                   className="flex-1 bg-primary text-white py-2.5 rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
                 >
-                  {issuing ? 'Issuing…' : 'Issue Token'}
+                  Review & Confirm
                 </button>
               </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* Issue Token — Confirm Step */}
+      {issueForm && issueStep === 'confirm' && (() => {
+        const selDoctor = deptDoctors.find(d => d.id === selectedDoctorId) ?? null
+        const selDept = departments.find(d => d.id === selectedDeptId) ?? null
+        const fee = selDoctor?.consultation_fee ?? 0
+
+        // Last visit calculation
+        const today = new Date(); today.setHours(0, 0, 0, 0)
+        const pastVisits = lastVisitHistory.filter(
+          (h: any) => !['registered', 'vitals_recorded', 'vitals_done', 'in_consultation', 'pre_billing'].includes(h.status)
+        )
+        const lastVisit = pastVisits.length > 0 ? new Date(pastVisits[0].visit_date) : null
+        const daysDiff = lastVisit ? Math.floor((today.getTime() - new Date(lastVisit).setHours(0,0,0,0)) / 86400000) : null
+        const isFollowUp = daysDiff !== null && daysDiff <= 7
+        const lastVisitLabel = lastVisit
+          ? `${lastVisit.toLocaleDateString('en-GB')} (${daysDiff === 0 ? 'today' : daysDiff === 1 ? '1 day ago' : `${daysDiff} days ago`})`
+          : null
+
+        return (
+          <div className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+              <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+                <h2 className="font-semibold text-gray-900">Confirm Token Issuance</h2>
+                <button onClick={closeIssue} className="text-gray-400 hover:text-gray-700">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="p-5 space-y-4">
+                {/* Summary card */}
+                <div className="bg-gray-50 rounded-xl divide-y divide-gray-200 border border-gray-200">
+                  <ConfirmRow label="Patient" value={`${selectedPatient!.first_name} ${selectedPatient!.last_name}`} sub={selectedPatient!.uhid} />
+                  <ConfirmRow label="Department" value={selDept?.name ?? '—'} />
+                  <ConfirmRow label="Doctor" value={selDoctor ? `Dr. ${selDoctor.full_name}` : '—'} sub={selDoctor?.specialization} />
+                  <ConfirmRow label="Priority" value={priority.replace('_', ' ')} highlight={priority === 'emergency' ? 'red' : priority === 'senior_citizen' ? 'yellow' : undefined} />
+                  {lastVisitLabel && (
+                    <ConfirmRow
+                      label="Last Visit"
+                      value={lastVisitLabel}
+                      highlight={isFollowUp ? 'green' : undefined}
+                    />
+                  )}
+                  {fee > 0 && (
+                    <ConfirmRow label="Consultation Fee" value={waiveFee ? 'Free (follow-up)' : `₹${fee}`} highlight={waiveFee ? 'green' : 'blue'} />
+                  )}
+                </div>
+
+                {/* Follow-up waiver */}
+                {fee > 0 && isFollowUp && (
+                  <label className="flex items-start gap-3 bg-green-50 border border-green-200 rounded-xl px-4 py-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={waiveFee}
+                      onChange={e => setWaiveFee(e.target.checked)}
+                      className="mt-0.5 accent-green-600 w-4 h-4"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-green-800">Waive consultation fee</p>
+                      <p className="text-xs text-green-700 mt-0.5">
+                        Last visit was {daysDiff} {daysDiff === 1 ? 'day' : 'days'} ago — follow-up within 7 days is free.
+                      </p>
+                    </div>
+                  </label>
+                )}
+
+                {/* Payment mode toggle */}
+                {fee > 0 && !waiveFee && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-gray-700">Payment Method</p>
+                    <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setPayMode('cash')}
+                        className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
+                          payMode === 'cash'
+                            ? 'bg-green-600 text-white'
+                            : 'bg-white text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        💵 Cash
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPayMode('online')}
+                        className={`flex-1 py-2.5 text-sm font-medium border-l border-gray-200 transition-colors ${
+                          payMode === 'online'
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-white text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        📲 Online (Razorpay)
+                      </button>
+                    </div>
+                    {payMode === 'cash' && (
+                      <p className="text-xs text-green-700 bg-green-50 rounded-lg px-3 py-2">
+                        Reception will collect <strong>₹{fee}</strong> cash and direct the patient to billing.
+                      </p>
+                    )}
+                    {payMode === 'online' && (
+                      <p className="text-xs text-blue-700 bg-blue-50 rounded-lg px-3 py-2">
+                        Payment request will be sent to the POS kiosk for <strong>₹{fee}</strong>.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex gap-3 pt-1">
+                  <button onClick={() => setIssueStep('form')}
+                    className="flex-1 border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-50">
+                    Back
+                  </button>
+                  <button
+                    disabled={issuing}
+                    onClick={() => issueToken()}
+                    className="flex-1 bg-primary text-white py-2.5 rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    {issuing
+                      ? 'Issuing…'
+                      : (fee > 0 && !waiveFee && payMode === 'cash')
+                        ? 'Issue Token & Collect Cash'
+                        : 'Confirm & Issue Token'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Edit Token Modal */}
       {editToken && (
@@ -516,5 +818,96 @@ function StatCard({ label, value, color }: { label: string; value: number | stri
       <p className="text-xs text-gray-500 mb-1">{label}</p>
       <p className={`text-3xl font-bold ${colorMap[color] || ''} rounded-lg px-2 py-0.5 inline-block`}>{value}</p>
     </div>
+  )
+}
+
+function ConfirmRow({ label, value, sub, highlight }: { label: string; value: string; sub?: string; highlight?: 'red' | 'yellow' | 'blue' | 'green' }) {
+  const highlightClass = highlight === 'red' ? 'text-red-700 font-semibold' : highlight === 'yellow' ? 'text-yellow-700 font-semibold' : highlight === 'blue' ? 'text-blue-700 font-semibold' : highlight === 'green' ? 'text-green-700 font-semibold' : 'text-gray-900 font-medium'
+  return (
+    <div className="flex items-center justify-between px-4 py-3">
+      <span className="text-xs text-gray-500 uppercase tracking-wide">{label}</span>
+      <div className="text-right">
+        <span className={`text-sm ${highlightClass}`}>{value}</span>
+        {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+      </div>
+    </div>
+  )
+}
+
+// ── Payment status chip shown in the Payment column ───────────────────────────
+function PaymentCell({ visitId }: { visitId: string }) {
+  const { data: invoice, isLoading } = useQuery<Invoice>({
+    queryKey: ['invoice-by-visit', visitId],
+    queryFn: () => billingService.getByVisit(visitId),
+    refetchInterval: 12_000,
+    retry: false,
+  })
+
+  if (isLoading) return <span className="text-xs text-gray-400">—</span>
+  if (!invoice)  return <span className="text-xs text-gray-400">—</span>
+
+  const isPaid = invoice.status === 'paid'
+  return (
+    <span className={`inline-flex items-center text-xs px-2 py-0.5 rounded-full font-medium border ${
+      isPaid
+        ? 'bg-green-50 text-green-700 border-green-200'
+        : 'bg-amber-50 text-amber-700 border-amber-200'
+    }`}>
+      {isPaid ? `✓ Paid ₹${Number(invoice.total).toFixed(0)}` : `⏳ ₹${Number(invoice.total).toFixed(0)} pending`}
+    </span>
+  )
+}
+
+// ── Payment recovery actions shown in the Actions column for pre_billing ──────
+function PaymentActions({
+  visitId,
+  onResendPos,
+  onSyncAndAdmit,
+  onAdmitManually,
+}: {
+  visitId: string
+  onResendPos: (id: string) => void
+  onSyncAndAdmit: (id: string) => void
+  onAdmitManually: (id: string) => void
+}) {
+  const { data: invoice } = useQuery<Invoice>({
+    queryKey: ['invoice-by-visit', visitId],
+    queryFn: () => billingService.getByVisit(visitId),
+    refetchInterval: 12_000,
+    retry: false,
+  })
+
+  if (!invoice || invoice.status === 'paid') return null
+
+  const hasPosOrder = !!invoice.razorpay_order_id
+
+  return (
+    <>
+      {hasPosOrder && (
+        <button
+          onClick={() => onResendPos(invoice.id)}
+          title="Re-send payment request to POS kiosk"
+          className="px-2 py-1 text-xs font-medium rounded-md bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 whitespace-nowrap"
+        >
+          Re-send POS
+        </button>
+      )}
+      {hasPosOrder && (
+        <button
+          onClick={() => onSyncAndAdmit(invoice.id)}
+          title="Check Razorpay and admit if paid"
+          className="px-2 py-1 text-xs font-medium rounded-md bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 whitespace-nowrap"
+        >
+          Verify
+        </button>
+      )}
+      <button
+        onClick={() => onAdmitManually(invoice.id)}
+        title="Mark as cash paid and admit to queue"
+        className="px-2 py-1 text-xs font-medium rounded-md bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 whitespace-nowrap"
+      >
+        Admit (Cash)
+      </button>
+    </>
   )
 }

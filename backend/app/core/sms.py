@@ -29,12 +29,12 @@ def send_doctor_credentials(
     """
     sid = settings.TWILIO_ACCOUNT_SID
     token = settings.TWILIO_AUTH_TOKEN
-    from_number = settings.TWILIO_FROM_NUMBER
+    from_number = settings.TWILIO_SMS_FROM_NUMBER
 
     if not (sid and token and from_number):
         logger.warning(
             "Twilio not configured — skipping SMS to %s. "
-            "Set TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER in .env.",
+            "Set TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_SMS_FROM_NUMBER in .env.",
             to_phone,
         )
         return
@@ -76,7 +76,7 @@ def send_staff_credentials(
     """
     sid = settings.TWILIO_ACCOUNT_SID
     token = settings.TWILIO_AUTH_TOKEN
-    from_number = settings.TWILIO_FROM_NUMBER
+    from_number = settings.TWILIO_SMS_FROM_NUMBER
 
     if not (sid and token and from_number):
         logger.warning(
@@ -106,3 +106,76 @@ def send_staff_credentials(
         logger.info("Password reset SMS sent to %s", to_phone)
     except Exception:
         logger.exception("Failed to send password reset SMS to %s", to_phone)
+
+
+def send_patient_welcome(
+    *,
+    to_phone: str,
+    patient_name: str,
+    uhid: str,
+    hospital_name: str = "our hospital",
+) -> None:
+    """
+    Send a WhatsApp welcome message to a newly registered patient via Twilio
+    Content API template.  Falls back to plain-body SMS if no WhatsApp from-number
+    is configured.  Raises nothing — errors are logged and swallowed.
+    """
+    sid = settings.TWILIO_ACCOUNT_SID
+    token = settings.TWILIO_AUTH_TOKEN
+
+    if not (sid and token):
+        logger.warning(
+            "Twilio not configured — skipping welcome message to %s.", to_phone
+        )
+        return
+
+    whatsapp_from = settings.TWILIO_WHATSAPP_FROM  # e.g. whatsapp:+14155238886
+
+    # Normalise Indian phone numbers: raw 10-digit → +91XXXXXXXXXX
+    def _normalise(phone: str) -> str:
+        p = phone.strip().lstrip("+")
+        if p.isdigit() and len(p) == 10:
+            p = "91" + p
+        return "+" + p
+
+    normalised = _normalise(to_phone)
+    to_wa = f"whatsapp:{normalised}"
+
+    try:
+        from twilio.rest import Client  # lazy import
+
+        client = Client(sid, token)
+
+        if whatsapp_from:
+            # Plain WhatsApp text — no content_sid needed for welcome messages
+            client.messages.create(
+                from_=whatsapp_from,
+                body=(
+                    f"Welcome {patient_name},\n\n"
+                    f"You have successfully registered with {hospital_name}.\n"
+                    f"Your unique Health ID (UHID) is: {uhid}\n\n"
+                    f"Please quote this UHID for all future visits.\n"
+                    f"— {hospital_name}"
+                ),
+                to=to_wa,
+            )
+            logger.info("WhatsApp welcome sent to patient %s (%s)", uhid, normalised)
+        else:
+            # Fallback: plain SMS
+            from_number = settings.TWILIO_SMS_FROM_NUMBER
+            if not from_number:
+                logger.warning("No from-number configured — skipping welcome to %s.", to_phone)
+                return
+            client.messages.create(
+                body=(
+                    f"Welcome {patient_name},\n"
+                    f"You have successfully registered with {hospital_name}.\n"
+                    f"Your UHID is: {uhid}\n"
+                    f"— {hospital_name}"
+                ),
+                from_=from_number,
+                to=normalised,
+            )
+            logger.info("SMS welcome sent to patient %s (%s)", uhid, normalised)
+    except Exception:
+        logger.exception("Failed to send welcome message to %s", to_phone)

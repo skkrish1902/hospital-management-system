@@ -6,14 +6,24 @@
  * then saves → visit moves to prescription_done → billing queue
  */
 import { useParams, useNavigate } from 'react-router-dom'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm, useFieldArray } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { visitService } from '@/services/visitService'
 import { prescriptionService } from '@/services/clinicalService'
 
-const FREQUENCIES = ['OD', 'BD', 'TID', 'QID', 'SOS', 'QHS', 'Q4H', 'Q6H', 'Q8H']
+const FREQUENCIES: { value: string; label: string }[] = [
+  { value: 'OD',  label: 'OD — Once Daily' },
+  { value: 'BD',  label: 'BD — Twice Daily' },
+  { value: 'TID', label: 'TID — Three Times a Day' },
+  { value: 'QID', label: 'QID — Four Times a Day' },
+  { value: 'SOS', label: 'SOS — As Needed' },
+  { value: 'QHS', label: 'QHS — Every Night at Bedtime' },
+  { value: 'Q4H', label: 'Q4H — Every 4 Hours' },
+  { value: 'Q6H', label: 'Q6H — Every 6 Hours' },
+  { value: 'Q8H', label: 'Q8H — Every 8 Hours' },
+]
 const ROUTES = ['oral', 'topical', 'IV', 'IM', 'SC', 'sublingual', 'inhaled', 'rectal']
 const DURATIONS = ['1 day', '3 days', '5 days', '7 days', '10 days', '14 days', '1 month', 'Ongoing']
 
@@ -32,9 +42,17 @@ const labTestSchema = z.object({
 })
 
 const rxSchema = z.object({
-  medicines: z.array(medicineSchema).min(1, 'Add at least one medicine'),
+  medicines: z.array(medicineSchema),
   instructions: z.string().optional(),
-  lab_tests: z.array(labTestSchema).optional(),
+  lab_tests: z.array(labTestSchema),
+}).superRefine((data, ctx) => {
+  if (data.medicines.length === 0 && data.lab_tests.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Add at least one medicine or one lab test',
+      path: ['_form'],
+    })
+  }
 })
 
 type RxForm = z.infer<typeof rxSchema>
@@ -42,6 +60,7 @@ type RxForm = z.infer<typeof rxSchema>
 export default function PrescriptionPage() {
   const { visitId } = useParams<{ visitId: string }>()
   const navigate = useNavigate()
+  const qc = useQueryClient()
 
   const { data: visit } = useQuery({
     queryKey: ['visit', visitId],
@@ -56,7 +75,7 @@ export default function PrescriptionPage() {
     formState: { errors },
   } = useForm<RxForm>({
     resolver: zodResolver(rxSchema),
-    defaultValues: { medicines: [{ name: '', dose: '', frequency: 'OD', duration: '5 days', route: 'oral' }], lab_tests: [] },
+    defaultValues: { medicines: [], lab_tests: [] },
   })
 
   const { fields, append, remove } = useFieldArray({ control, name: 'medicines' })
@@ -69,7 +88,10 @@ export default function PrescriptionPage() {
       instructions: data.instructions,
       lab_tests: data.lab_tests?.length ? data.lab_tests : undefined,
     }),
-    onSuccess: () => navigate('/doctor'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['visits'] })
+      navigate('/doctor/consultation')
+    },
   })
 
   return (
@@ -92,6 +114,9 @@ export default function PrescriptionPage() {
       </div>
 
       <form onSubmit={handleSubmit(d => savePrescription(d))} className="space-y-5">
+        {(errors as any)._form && (
+          <p className="text-sm text-red-600 font-medium">{(errors as any)._form.message}</p>
+        )}
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div className="px-5 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-gray-700">Medicines</h2>
@@ -112,7 +137,9 @@ export default function PrescriptionPage() {
           )}
 
           <div className="divide-y divide-gray-100">
-            {fields.map((field, i) => (
+            {fields.length === 0 ? (
+              <p className="px-5 py-4 text-xs text-gray-400">No medicines added. Click "Add Medicine" to add.</p>
+            ) : fields.map((field, i) => (
               <div key={field.id} className="px-5 py-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold text-gray-400 uppercase">Medicine {i + 1}</span>
@@ -146,7 +173,7 @@ export default function PrescriptionPage() {
                   <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">Frequency *</label>
                     <select {...register(`medicines.${i}.frequency`)} className={rx_input(false)}>
-                      {FREQUENCIES.map(f => <option key={f} value={f}>{f}</option>)}
+                      {FREQUENCIES.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
                     </select>
                   </div>
 
@@ -177,7 +204,7 @@ export default function PrescriptionPage() {
         {/* Lab Tests */}
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div className="px-5 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-700">Lab Tests <span className="text-gray-400 font-normal">(optional)</span></h2>
+            <h2 className="text-sm font-semibold text-gray-700">Lab Tests</h2>
             <button
               type="button"
               onClick={() => appendLab({ test_name: '', notes: '' })}

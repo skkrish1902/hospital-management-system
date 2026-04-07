@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import require_role
 from app.db.engine import get_session
 from app.models.tenant.consultation import Consultation
+from app.models.tenant.patient import Patient
 from app.models.tenant.visit import Visit
 from app.schemas.consultation import ConsultationCreate, ConsultationRead, ConsultationUpdate
 from app.websocket.manager import ws_manager
@@ -39,7 +40,8 @@ async def create_consultation(
             detail="Consultation already exists for this visit. Use PATCH to update.",
         )
 
-    consult = Consultation(id=uuid.uuid4(), **payload.model_dump())
+    patient = await session.get(Patient, visit.patient_id)
+    consult = Consultation(id=uuid.uuid4(), uhid=patient.uhid if patient else None, **payload.model_dump())
     session.add(consult)
 
     # Advance visit status
@@ -76,7 +78,7 @@ async def update_consultation(
 async def get_consultation(
     visit_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_role("doctor", "nurse", "hospital_admin", "super_admin")),
+    _: dict = Depends(require_role("doctor", "nurse", "pharmacist", "hospital_admin", "super_admin")),
 ):
     consult = (await session.execute(
         select(Consultation).where(Consultation.visit_id == visit_id)

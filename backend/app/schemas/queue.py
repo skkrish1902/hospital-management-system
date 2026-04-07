@@ -12,6 +12,8 @@ class QueueTokenCreate(BaseModel):
     doctor_id: Optional[uuid.UUID] = None
     queue_type: str = "registration"   # registration | vitals | consultation | pharmacy | billing
     priority: str = "normal"           # emergency | senior_citizen | normal
+    waive_fee: bool = False            # True = follow-up within 7 days, skip invoice/Razorpay
+    waive_fee: bool = False            # True = follow-up within 7 days, skip invoice/Razorpay
 
 
 class QueueTokenRead(BaseModel):

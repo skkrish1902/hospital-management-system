@@ -46,7 +46,7 @@ export type AppointmentStatus =
 
 export type InvoiceStatus = 'draft' | 'paid' | 'cancelled'
 
-export type PaymentMethod = 'cash' | 'upi' | 'card' | 'insurance'
+export type PaymentMethod = 'cash' | 'upi' | 'card' | 'insurance' | 'follow_up'
 
 // Entities
 export interface Patient {
@@ -135,6 +135,9 @@ export interface Visit {
   doctor_name?: string
   department_name?: string
   doctor_consultation_fee?: number
+  priority?: 'emergency' | 'senior_citizen' | 'normal'
+  token_no?: number
+  has_lab_order?: boolean
 }
 
 export interface Vitals {
@@ -189,9 +192,39 @@ export interface InvoiceLineItem {
   amount: number
 }
 
+export interface PatientHistoryLabOrder {
+  id?: UUID
+  tests?: { test: string; notes?: string }[]
+  status: string
+  result?: {
+    results?: Record<string, string>
+    reported_at: string
+    report_url?: string
+  }
+}
+
+export interface PatientHistoryItem {
+  visit_id: UUID
+  visit_date: string
+  status: string
+  doctor_name?: string
+  department_name?: string
+  consultation?: {
+    chief_complaint?: string
+    examination?: string
+    diagnosis_icd10?: { code: string; description: string }[]
+    notes?: string
+    follow_up_date?: string
+  }
+  medicines?: MedicineItem[]
+  prescription_instructions?: string
+  lab_orders: PatientHistoryLabOrder[]
+}
+
 export interface Invoice {
   id: UUID
   visit_id: UUID
+  uhid?: string
   line_items: InvoiceLineItem[]
   subtotal: number
   discount: number
@@ -200,6 +233,8 @@ export interface Invoice {
   payment_method?: PaymentMethod
   status: InvoiceStatus
   paid_at?: string
+  razorpay_order_id?: string
+  razorpay_payment_id?: string
 }
 
 export interface Appointment {
@@ -208,11 +243,12 @@ export interface Appointment {
   doctor_id: UUID
   slot_time: string
   status: AppointmentStatus
-  type: 'walkin' | 'pre_booked'
+  type: 'walkin' | 'phone' | 'online'
   notes?: string
   booked_by_user_id?: UUID
   created_at: string
   patient_name?: string
+  patient_uhid?: string
   doctor_name?: string
 }
 
@@ -230,16 +266,19 @@ export interface LabOrder {
   id: UUID
   visit_id: UUID
   tests: { test: string; notes?: string }[]
-  status: 'ordered' | 'sample_collected' | 'processing' | 'resulted'
+  status: 'ordered' | 'sample_collected' | 'processing' | 'resulted' | 'rejected'
   ordered_at: string
   patient_name?: string
   doctor_name?: string
+  result?: LabResult
 }
 
 export interface LabResult {
   id: UUID
   lab_order_id: UUID
   results: Record<string, string>
+  notes?: string
+  report_url?: string
   reported_by_user_id?: UUID
   reported_at: string
 }
@@ -266,4 +305,6 @@ export interface CheckInResult {
   token_id: UUID
   token_no: number
   queue_type: string
+  needs_payment: boolean
+  invoice_id?: UUID
 }

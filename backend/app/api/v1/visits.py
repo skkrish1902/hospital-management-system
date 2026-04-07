@@ -124,12 +124,45 @@ async def list_visits(
             stmt = stmt.where(Visit.department_id == department_id)
         else:
             stmt = stmt.where(Visit.department_id.in_(assigned_dept_ids))
+    # Doctors are restricted to their own patients — enforced server-side
+    elif current_user.get("role") == "doctor":
+        doctor_row = (await session.execute(
+            select(Doctor).where(Doctor.user_id == uuid.UUID(current_user["sub"]))
+        )).scalar_one_or_none()
+        if not doctor_row:
+            return []  # Doctor account not linked to a Doctor record
+        stmt = stmt.where(Visit.doctor_id == doctor_row.id)
+        if department_id:
+            stmt = stmt.where(Visit.department_id == department_id)
     elif department_id:
         stmt = stmt.where(Visit.department_id == department_id)
 
     stmt = stmt.order_by(Visit.created_at.desc())
 
     rows = (await session.execute(stmt)).scalars().all()
+
+    # Batch-fetch today's queue tokens to enrich visits with priority & token_no
+    today_start = datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=timezone.utc)
+    token_by_patient: dict[uuid.UUID, QueueToken] = {}
+    if rows:
+        patient_ids = [v.patient_id for v in rows]
+        token_rows = (await session.execute(
+            select(QueueToken)
+            .where(QueueToken.patient_id.in_(patient_ids), QueueToken.issued_at >= today_start)
+            .order_by(QueueToken.issued_at.asc())   # earliest first → latest overwrites in dict
+        )).scalars().all()
+        for t in token_rows:
+            token_by_patient[t.patient_id] = t
+
+    # Batch-fetch lab order visit_ids so we can populate has_lab_order flag
+    lab_visit_ids: set[uuid.UUID] = set()
+    if rows:
+        dispatch_visit_ids = [v.id for v in rows]
+        lab_rows = (await session.execute(
+            select(LabOrder.visit_id).where(LabOrder.visit_id.in_(dispatch_visit_ids))
+        )).scalars().all()
+        lab_visit_ids = set(lab_rows)
+
     items = []
     for v in rows:
         item = VisitRead.model_validate(v)
@@ -139,8 +172,17 @@ async def list_visits(
         item.patient_name = f"{patient.first_name} {patient.last_name}" if patient else None
         item.doctor_name = doctor.full_name if doctor else None
         item.department_name = dept.name if dept else None
+        item.has_lab_order = v.id in lab_visit_ids
         item.doctor_consultation_fee = float(doctor.consultation_fee) if doctor else None
+        qt = token_by_patient.get(v.patient_id)
+        item.priority = qt.priority if qt else "normal"
+        item.token_no = qt.token_no if qt else None
         items.append(item)
+
+    # Sort by priority (emergency first), then token number ascending
+    _PRIORITY_ORDER = {"emergency": 0, "senior_citizen": 1, "normal": 2}
+    items.sort(key=lambda x: (_PRIORITY_ORDER.get(x.priority or "normal", 2), x.token_no or 999999))
+
     return items
 
 
@@ -248,6 +290,7 @@ async def dispatch_visit(
     elif payload.action == "pharmacy":
         rx = (await session.execute(
             select(Prescription).where(Prescription.visit_id == visit_id)
+            .order_by(Prescription.created_at.desc()).limit(1)
         )).scalar_one_or_none()
         if not rx:
             raise HTTPException(status_code=400, detail="No prescription found for this visit")
@@ -256,7 +299,8 @@ async def dispatch_visit(
             select(PharmacyQueue).where(PharmacyQueue.prescription_id == rx.id)
         )).scalar_one_or_none()
         if not existing_pq:
-            session.add(PharmacyQueue(id=uuid.uuid4(), prescription_id=rx.id, status="pending"))
+            patient = await session.get(Patient, visit.patient_id)
+            session.add(PharmacyQueue(id=uuid.uuid4(), prescription_id=rx.id, uhid=patient.uhid if patient else None, status="pending"))
         # If lab was already dispatched, both are now done
         visit.status = "dispatched_both" if visit.status == "dispatched_lab" else "dispatched_pharmacy"
         await _complete_queue_token(visit, session)
@@ -267,7 +311,8 @@ async def dispatch_visit(
         )).scalar_one_or_none()
         if not lab_order:
             raise HTTPException(status_code=400, detail="No lab order found for this visit — doctor must add lab tests first")
-        lab_order.status = "sample_collected"
+        # Reset to ordered so the lab technician starts fresh
+        lab_order.status = "ordered"
         # If pharmacy was already dispatched, both are now done
         visit.status = "dispatched_both" if visit.status == "dispatched_pharmacy" else "dispatched_lab"
         await _complete_queue_token(visit, session)
