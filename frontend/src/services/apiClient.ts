@@ -15,17 +15,16 @@ apiClient.interceptors.request.use((config) => {
   return config
 })
 
-// On 401, attempt silent refresh then retry once
+// On 401, attempt silent refresh then retry once; if that also fails, mark session expired
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true
-      const { refreshToken, logout, setTokens } = useAuthStore.getState()
+      const { refreshToken, markSessionExpired, setTokens } = useAuthStore.getState()
       if (!refreshToken) {
-        logout()
-        window.location.href = '/login'
+        markSessionExpired()
         return Promise.reject(error)
       }
       try {
@@ -34,8 +33,8 @@ apiClient.interceptors.response.use(
         originalRequest.headers.Authorization = `Bearer ${data.access_token}`
         return apiClient(originalRequest)
       } catch {
-        logout()
-        window.location.href = '/login'
+        // Refresh token also rejected — secret key likely changed
+        markSessionExpired()
       }
     }
     return Promise.reject(error)

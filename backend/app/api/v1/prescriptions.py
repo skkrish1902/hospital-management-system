@@ -130,4 +130,12 @@ async def get_prescription(
     )).scalar_one_or_none()
     if not rx:
         raise HTTPException(status_code=404, detail="Prescription not found for this visit")
-    return rx
+
+    # Fetch lab tests from the linked LabOrder (they are stored there, not on the prescription)
+    lab_order = (await session.execute(
+        select(LabOrder).where(LabOrder.visit_id == visit_id)
+    )).scalar_one_or_none()
+
+    data = PrescriptionRead.model_validate(rx)
+    data.lab_tests = lab_order.tests if lab_order else None
+    return data

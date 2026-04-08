@@ -84,12 +84,6 @@ export default function NurseVitalsPage() {
     refetchInterval: 30_000,
   })
 
-  const { data: vitalsRecordedVisits = [], refetch: refetchVitalsRecorded } = useQuery({
-    queryKey: ['visits', 'vitals_recorded', deptId],
-    queryFn: () => visitService.list({ status: 'vitals_recorded', department_id: deptId }),
-    refetchInterval: 30_000,
-  })
-
   // ── Dispatch tab queries ─────────────────────────────────────────────────────
   const { data: prescriptionDoneVisits = [], refetch: refetchPrescription } = useQuery({
     queryKey: ['visits', 'prescription_done', deptId],
@@ -160,7 +154,6 @@ export default function NurseVitalsPage() {
 
   const onUpdate = useCallback(() => {
     refetchRegistered()
-    refetchVitalsRecorded()
     refetchPrescription()
     refetchPharmacy()
     refetchLab()
@@ -168,7 +161,7 @@ export default function NurseVitalsPage() {
     refetchBillingPending()
     refetchClosed()
     refetchPharmacyQueue()
-  }, [refetchRegistered, refetchVitalsRecorded, refetchPrescription, refetchPharmacy, refetchLab, refetchBoth, refetchBillingPending, refetchClosed, refetchPharmacyQueue])
+  }, [refetchRegistered, refetchPrescription, refetchPharmacy, refetchLab, refetchBoth, refetchBillingPending, refetchClosed, refetchPharmacyQueue])
 
   useWebSocket('visit:update', onUpdate)
   useWebSocket('queue:update', onUpdate)
@@ -178,7 +171,7 @@ export default function NurseVitalsPage() {
     resolver: zodResolver(vitalsSchema),
   })
 
-  // Save vitals → vitals_recorded; nurse manually sends to doctor when ready
+  // Save vitals → automatically sends patient to doctor queue (vitals_done)
   const { mutate: submitVitals, isPending, error: vitalsError } = useMutation({
     mutationFn: (data: VitalsCreate) => vitalsService.record(data),
     onSuccess: () => {
@@ -186,12 +179,6 @@ export default function NurseVitalsPage() {
       setSelectedVisit(null)
       reset()
     },
-  })
-
-  // Explicitly send patient to doctor queue (vitals_recorded → vitals_done)
-  const { mutate: sendToDoctor, isPending: sending } = useMutation({
-    mutationFn: (visitId: string) => visitService.updateStatus(visitId, 'vitals_done'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['visits'] }),
   })
 
   // Dispatch to pharmacy or lab (confirmed via modal)
@@ -371,48 +358,6 @@ export default function NurseVitalsPage() {
               ))}
             </div>
           </div>
-
-          {/* Vitals Recorded — Send to Doctor */}
-          {vitalsRecordedVisits.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-100 bg-green-50">
-                <h2 className="text-sm font-semibold text-green-800">
-                  Vitals Done — Ready to Send to Doctor ({vitalsRecordedVisits.length})
-                </h2>
-                <p className="text-xs text-green-600 mt-0.5">Review and send each patient to the doctor queue when ready</p>
-              </div>
-              <div className="divide-y divide-gray-100">
-                {vitalsRecordedVisits.map(v => (
-                  <div key={v.id} className="flex items-center justify-between px-4 py-3">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {v.token_no && (
-                          <span className="text-xs font-bold text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                            #{v.token_no}
-                          </span>
-                        )}
-                        <p className="font-medium text-gray-900 text-sm">{v.patient_name || 'Patient'}</p>
-                        <PriorityBadge priority={v.priority} />
-                      </div>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {v.department_name || ''}{v.department_name ? ' · ' : ''}{v.doctor_name ? `Dr. ${v.doctor_name}` : 'Unassigned'} · {new Date(v.created_at).toLocaleTimeString()}
-                      </p>
-                    </div>
-                    <button
-                      disabled={sending}
-                      onClick={() => sendToDoctor(v.id)}
-                      className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-60"
-                    >
-                      Send to Doctor
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
         </div>
 

@@ -37,6 +37,7 @@ class PrescriptionRead(BaseModel):
     visit_id: uuid.UUID
     medicines: Optional[List[Dict[str, Any]]] = None
     instructions: Optional[str] = None
+    lab_tests: Optional[List[Dict[str, Any]]] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

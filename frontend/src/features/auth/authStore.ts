@@ -14,9 +14,11 @@ interface AuthState {
   accessToken: string | null
   refreshToken: string | null
   user: AuthUser | null
+  sessionExpired: boolean
   setTokens: (access: string, refresh: string) => void
   setUser: (user: AuthUser) => void
   logout: () => void
+  markSessionExpired: () => void
   isAuthenticated: () => boolean
 }
 
@@ -35,6 +37,7 @@ export const useAuthStore = create<AuthState>()(
       accessToken: null,
       refreshToken: null,
       user: null,
+      sessionExpired: false,
 
       setTokens: (access: string, refresh: string) => {
         const payload = parseJwt(access)
@@ -54,7 +57,9 @@ export const useAuthStore = create<AuthState>()(
 
       setUser: (user: AuthUser) => set({ user }),
 
-      logout: () => set({ accessToken: null, refreshToken: null, user: null }),
+      logout: () => set({ accessToken: null, refreshToken: null, user: null, sessionExpired: false }),
+
+      markSessionExpired: () => set({ accessToken: null, refreshToken: null, user: null, sessionExpired: true }),
 
       isAuthenticated: () => {
         const token = get().accessToken
@@ -71,6 +76,7 @@ export const useAuthStore = create<AuthState>()(
         accessToken: state.accessToken,
         refreshToken: state.refreshToken,
         user: state.user,
+        // sessionExpired is intentionally not persisted — always starts false on page load
       }),
     },
   ),

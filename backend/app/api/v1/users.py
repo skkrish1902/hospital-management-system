@@ -87,7 +87,11 @@ async def list_users(
 
     stmt = (
         select(User)
-        .where(User.tenant_id == tenant.id, User.role != "doctor")
+        .where(
+            User.tenant_id == tenant.id,
+            User.role != "doctor",
+            User.role != "super_admin",   # super_admin is platform-level, not hospital staff
+        )
         .order_by(User.full_name)
     )
     if not include_inactive:

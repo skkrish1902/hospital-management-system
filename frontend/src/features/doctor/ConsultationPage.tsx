@@ -93,7 +93,7 @@ export default function ConsultationPage() {
     refetchInterval: 30_000,
   })
 
-  // Count of patients still being prepared by nurse (vitals_recorded → not yet sent to doctor)
+  // Count of patients still being prepared by nurse
   const { data: preparingVisits = [] } = useQuery({
     queryKey: ['visits', 'vitals_recorded'],
     queryFn: () => visitService.list({ status: 'vitals_recorded' }),
@@ -155,6 +155,18 @@ export default function ConsultationPage() {
     }
   }
 
+  const [callingIn, setCallingIn] = useState<string | null>(null)
+
+  const callIn = async (v: Visit) => {
+    setCallingIn(v.id)
+    try {
+      await visitService.updateStatus(v.id, 'in_consultation')
+      qc.invalidateQueries({ queryKey: ['visits'] })
+    } catch { /* ignore — form still opens */ }
+    setCallingIn(null)
+    await selectVisit(v)
+  }
+
   const { mutate: saveConsultation, isPending } = useMutation({
     mutationFn: (data: ConsultForm) => consultationService.create({
       visit_id: selectedVisit!.id,
@@ -195,11 +207,10 @@ export default function ConsultationPage() {
             {visits.length === 0 ? (
               <div className="p-6 text-center text-gray-400 text-sm">No patients waiting</div>
             ) : visits.map(v => (
-              <button
+              <div
                 key={v.id}
-                onClick={() => selectVisit(v)}
-                className={`w-full text-left px-4 py-3 hover:bg-blue-50 transition-colors text-sm ${
-                  selectedVisit?.id === v.id ? 'bg-blue-50 border-l-2 border-blue-500' : ''
+                className={`px-4 py-3 text-sm border-l-2 transition-colors ${
+                  selectedVisit?.id === v.id ? 'bg-blue-50 border-blue-500' : 'border-transparent hover:bg-gray-50'
                 }`}
               >
                 <div className="flex items-center gap-2 flex-wrap">
@@ -212,7 +223,23 @@ export default function ConsultationPage() {
                 <p className="text-xs text-gray-400 mt-0.5">{v.doctor_name ? `Dr. ${v.doctor_name}` : ''}
                   {v.department_name ? ` · ${v.department_name}` : ''}
                 </p>
-              </button>
+                <button
+                  onClick={() => callIn(v)}
+                  disabled={callingIn === v.id}
+                  className="mt-2 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-60"
+                >
+                  {callingIn === v.id ? (
+                    'Calling…'
+                  ) : (
+                    <>
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                      </svg>
+                      Call In
+                    </>
+                  )}
+                </button>
+              </div>
             ))}
           </div>
         </div>

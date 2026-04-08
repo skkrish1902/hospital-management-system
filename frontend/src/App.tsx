@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import ProtectedRoute from '@/components/shared/ProtectedRoute'
 import RoleGuard from '@/components/shared/RoleGuard'
 import AppLayout from '@/components/shared/Layout'
@@ -43,9 +43,45 @@ function Dashboard() {
 }
 const RosterPage = () => <div className="p-6"><h1 className="text-2xl font-semibold">Nurse Roster</h1></div>
 
+function SessionExpiredModal() {
+  const { sessionExpired, logout } = useAuthStore()
+  const navigate = useNavigate()
+  if (!sessionExpired) return null
+  const handleReLogin = () => {
+    logout()
+    navigate('/login', { replace: true })
+  }
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full mx-4 p-8 text-center space-y-5">
+        <div className="flex justify-center">
+          <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center">
+            <svg className="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+          </div>
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">Session Expired</h2>
+          <p className="text-sm text-gray-500 mt-1.5">
+            Your session is no longer valid — the server security key may have been rotated. Please log in again to continue.
+          </p>
+        </div>
+        <button
+          onClick={handleReLogin}
+          className="w-full bg-primary text-white py-2.5 rounded-lg font-medium text-sm hover:bg-primary/90 transition-colors"
+        >
+          Log In Again
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   return (
     <BrowserRouter>
+      <SessionExpiredModal />
       <Routes>
         {/* Public routes */}
         <Route path="/login" element={<LoginPage />} />
