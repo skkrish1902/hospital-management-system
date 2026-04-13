@@ -16,6 +16,7 @@ import { format, addDays, subDays, parseISO } from 'date-fns'
 import { appointmentService, doctorService, departmentService, billingService } from '@/services/clinicalService'
 import { patientService } from '@/services/patientService'
 import { useWebSocket } from '@/hooks/useWebSocket'
+import { RegisterPatientModal } from '@/components/shared/RegisterPatientModal'
 import type { Appointment, AppointmentSlot, Doctor, Patient, Department } from '@/types/common'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -365,6 +366,8 @@ function BookModal({
   const [patientResults, setPatientResults] = useState<Patient[]>([])
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
   const [filterDeptId, setFilterDeptId] = useState('')
+  const [noResults, setNoResults] = useState(false)
+  const [showRegisterModal, setShowRegisterModal] = useState(false)
 
   const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<BookForm>({
     resolver: zodResolver(bookSchema),
@@ -395,9 +398,10 @@ function BookModal({
   })
 
   const searchPatients = async (q: string) => {
-    if (q.length < 2) { setPatientResults([]); return }
+    if (q.length < 2) { setPatientResults([]); setNoResults(false); return }
     const results = await patientService.list(q)
     setPatientResults(results)
+    setNoResults(results.length === 0)
   }
 
   const selectPatient = (p: Patient) => {
@@ -405,6 +409,7 @@ function BookModal({
     setValue('patient_id', p.id)
     setPatientSearch(`${p.first_name} ${p.last_name} (${p.uhid})`)
     setPatientResults([])
+    setNoResults(false)
   }
 
   return (
@@ -441,6 +446,18 @@ function BookModal({
                   </li>
                 ))}
               </ul>
+            )}
+            {noResults && !selectedPatient && (
+              <p className="text-xs text-gray-500 mt-1">
+                No patients found.{' '}
+                <button
+                  type="button"
+                  onClick={() => setShowRegisterModal(true)}
+                  className="text-primary font-medium underline hover:text-primary/80"
+                >
+                  Click here to register a new patient
+                </button>
+              </p>
             )}
             {selectedPatient && (
               <p className="text-xs text-green-600">✓ {selectedPatient.uhid} selected</p>
@@ -558,6 +575,16 @@ function BookModal({
           </div>
         </form>
       </div>
+      {showRegisterModal && (
+        <RegisterPatientModal
+          onClose={() => setShowRegisterModal(false)}
+          prefillPhone={/^\d/.test(patientSearch) ? patientSearch.replace(/\D/g, '').slice(0, 15) : undefined}
+          onSuccess={patient => {
+            selectPatient(patient)
+            setShowRegisterModal(false)
+          }}
+        />
+      )}
     </div>
   )
 }

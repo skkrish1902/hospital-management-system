@@ -5,6 +5,7 @@ export interface PatientCreate {
   first_name: string
   last_name: string
   dob?: string
+  age?: number
   gender: string
   phone: string
   email?: string
@@ -12,6 +13,7 @@ export interface PatientCreate {
   blood_group?: string
   insurance_provider?: string
   insurance_id?: string
+  aadhar_number: string
 }
 
 export const patientService = {

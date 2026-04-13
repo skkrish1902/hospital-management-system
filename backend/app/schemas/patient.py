@@ -9,6 +9,7 @@ class PatientCreate(BaseModel):
     first_name: str
     last_name: str
     dob: Optional[date] = None
+    age: Optional[int] = None
     gender: str  # male | female | other
     phone: str
     email: Optional[EmailStr] = None
@@ -16,6 +17,7 @@ class PatientCreate(BaseModel):
     blood_group: Optional[str] = None
     insurance_provider: Optional[str] = None
     insurance_id: Optional[str] = None
+    aadhar_number: str  # exactly 12 digits, required
 
 
 class PatientRead(BaseModel):
@@ -24,6 +26,7 @@ class PatientRead(BaseModel):
     first_name: str
     last_name: str
     dob: Optional[date] = None
+    age: Optional[int] = None
     gender: str
     phone: str
     email: Optional[str] = None
@@ -31,6 +34,7 @@ class PatientRead(BaseModel):
     blood_group: Optional[str] = None
     insurance_provider: Optional[str] = None
     insurance_id: Optional[str] = None
+    aadhar_number: Optional[str] = None
     is_active: bool
 
     model_config = {"from_attributes": True}
@@ -40,6 +44,7 @@ class PatientUpdate(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     dob: Optional[date] = None
+    age: Optional[int] = None
     gender: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -47,6 +52,7 @@ class PatientUpdate(BaseModel):
     blood_group: Optional[str] = None
     insurance_provider: Optional[str] = None
     insurance_id: Optional[str] = None
+    aadhar_number: Optional[str] = None
 
 
 # ── Patient History (for doctor consultation view) ──────────────────────────

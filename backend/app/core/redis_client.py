@@ -3,11 +3,13 @@ Redis client singleton for the backend.
 Used for:
   - Refresh token JTI blocklist (logout / suspend)
   - Tenant feature cache (live enforcement, TTL 5 min)
+  - Tenant forced-logout timestamp (feature toggle forces re-login)
   - WebSocket pub/sub (see websocket/redis_bridge.py)
 
 Intentionally lightweight — one module-level client reused across requests.
 """
 import json
+import time
 import uuid
 
 import redis.asyncio as aioredis
@@ -22,6 +24,12 @@ _BLOCKLIST_PREFIX = "blocklist:jti:"
 # even for users who already have a live JWT.
 _FEATURE_PREFIX = "tenant:features:"
 _FEATURE_TTL = 300  # 5 minutes
+
+# Key prefix for forced-logout timestamp — set when super_admin toggles tenant features.
+# Any JWT whose iat < this timestamp is immediately rejected (access + refresh).
+# TTL = refresh token lifetime so old refresh tokens can never be reused.
+_FORCED_LOGOUT_PREFIX = "tenant:forced_logout:"
+_FORCED_LOGOUT_TTL = 60 * 60 * 24 * 7  # 7 days (matches refresh token lifetime)
 
 # Module-level singleton (lazily initialized; safe for asyncio)
 _client: aioredis.Redis | None = None
@@ -72,9 +80,25 @@ async def set_cached_features(tenant_id: uuid.UUID | str, enabled_features: list
 
 async def invalidate_feature_cache(tenant_id: uuid.UUID | str) -> None:
     """
-    Immediately remove the feature cache for a tenant.
-    Called by super_admin whenever features are toggled — the next request for
-    this tenant will re-read from the DB and repopulate the cache.
+    Immediately remove the feature cache for a tenant and record a forced-logout
+    timestamp. Any JWT (access or refresh) issued before this moment will be
+    rejected, forcing all active users of this tenant to re-login.
     """
     redis = get_redis()
     await redis.delete(_feature_key(tenant_id))
+    # Record the forced-logout wall-clock time so get_current_user can compare iat
+    await redis.setex(
+        f"{_FORCED_LOGOUT_PREFIX}{tenant_id}",
+        _FORCED_LOGOUT_TTL,
+        str(time.time()),
+    )
+
+
+async def get_tenant_forced_logout_time(tenant_id: uuid.UUID | str) -> float | None:
+    """
+    Return the Unix timestamp after which tokens are considered valid, or None if
+    no forced-logout is in effect for this tenant.
+    """
+    redis = get_redis()
+    val = await redis.get(f"{_FORCED_LOGOUT_PREFIX}{tenant_id}")
+    return float(val) if val is not None else None

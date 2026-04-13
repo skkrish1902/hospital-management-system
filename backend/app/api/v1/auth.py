@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.engine import get_session
 from app.core.dependencies import get_current_user
 from app.core.security import verify_password, hash_password, create_access_token, create_refresh_token, decode_token
-from app.core.redis_client import block_token, is_token_blocked, set_cached_features
+from app.core.redis_client import block_token, is_token_blocked, set_cached_features, get_tenant_forced_logout_time
 from app.models.public.user import User, Tenant
 from app.models.public.tenant_feature import TenantFeature
 from app.schemas.auth import LoginRequest, TokenResponse, RefreshRequest
@@ -102,6 +102,17 @@ async def refresh(payload: RefreshRequest, session: AsyncSession = Depends(get_s
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+    # Forced-logout check — reject refresh tokens issued before a feature-toggle event
+    if user.role != "super_admin" and user.tenant_id:
+        forced_logout_time = await get_tenant_forced_logout_time(str(user.tenant_id))
+        if forced_logout_time is not None:
+            token_iat = token_data.get("iat", 0)
+            if token_iat < forced_logout_time:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Your session has been invalidated. Please log in again.",
+                )
 
     if user.role == "super_admin":
         extra_claims = {

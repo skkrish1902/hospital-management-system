@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decode_token
 from app.db.engine import get_session
-from app.core.redis_client import get_cached_features, set_cached_features
+from app.core.redis_client import get_cached_features, set_cached_features, get_tenant_forced_logout_time
 
 bearer_scheme = HTTPBearer()
 
@@ -23,12 +23,29 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    session_invalidated_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Your session has been invalidated. Please log in again.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     try:
         payload = decode_token(credentials.credentials)
         user_id: str = payload.get("sub")
         if user_id is None:
             raise credentials_exception
+
+        # Check forced-logout for tenant users — super_admin is never forced out
+        tenant_id_str = payload.get("tenant_id")
+        if tenant_id_str:
+            forced_logout_time = await get_tenant_forced_logout_time(tenant_id_str)
+            if forced_logout_time is not None:
+                token_iat = payload.get("iat", 0)
+                if token_iat < forced_logout_time:
+                    raise session_invalidated_exception
+
         return payload
+    except HTTPException:
+        raise
     except JWTError:
         raise credentials_exception
 

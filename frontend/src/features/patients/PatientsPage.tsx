@@ -1,62 +1,19 @@
 import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
-import { patientService, type PatientCreate } from '@/services/patientService'
+import { useQuery } from '@tanstack/react-query'
+import { patientService } from '@/services/patientService'
 import type { Patient } from '@/types/common'
-
-const patientSchema = z.object({
-  first_name: z.string().min(1, 'Required'),
-  last_name: z.string().min(1, 'Required'),
-  phone: z.string().min(10, 'Enter valid phone').max(15),
-  gender: z.enum(['male', 'female', 'other']),
-  dob: z.string().optional(),
-  email: z.string().email('Invalid email').optional().or(z.literal('')),
-  blood_group: z.string().optional(),
-  address: z.string().optional(),
-  insurance_provider: z.string().optional(),
-  insurance_id: z.string().optional(),
-})
-
-type FormValues = z.infer<typeof patientSchema>
+import { RegisterPatientModal } from '@/components/shared/RegisterPatientModal'
 
 export default function PatientsPage() {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Patient | null>(null)
   const [showForm, setShowForm] = useState(false)
-  const qc = useQueryClient()
 
   const { data: patients = [], isFetching } = useQuery({
     queryKey: ['patients', search],
     queryFn: () => patientService.list(search || undefined),
     staleTime: 10_000,
   })
-
-  const { mutate: registerPatient, isPending, error: createError } = useMutation({
-    mutationFn: (data: PatientCreate) => patientService.create(data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['patients'] })
-      setShowForm(false)
-      reset()
-    },
-  })
-
-  const {
-    register,
-    handleSubmit,
-    reset,
-    formState: { errors },
-  } = useForm<FormValues>({ resolver: zodResolver(patientSchema) })
-
-  const onSubmit = (values: FormValues) => {
-    const payload: PatientCreate = {
-      ...values,
-      email: values.email || undefined,
-      dob: values.dob || undefined,
-    }
-    registerPatient(payload)
-  }
 
   return (
     <div className="p-6 space-y-6">
@@ -168,106 +125,11 @@ export default function PatientsPage() {
 
       {/* Registration form modal */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center p-4" onClick={() => setShowForm(false)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
-            <div className="p-6 border-b border-gray-100 flex items-center justify-between">
-              <h2 className="font-semibold text-gray-900">Register New Patient</h2>
-              <button onClick={() => setShowForm(false)} className="text-gray-400 hover:text-gray-700">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-4">
-              {createError && (
-                <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
-                  Registration failed. Please try again.
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="First Name *" error={errors.first_name?.message}>
-                  <input {...register('first_name')} className={inputCls(!!errors.first_name)} placeholder="First name" />
-                </Field>
-                <Field label="Last Name *" error={errors.last_name?.message}>
-                  <input {...register('last_name')} className={inputCls(!!errors.last_name)} placeholder="Last name" />
-                </Field>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="Phone *" error={errors.phone?.message}>
-                  <input {...register('phone')} type="tel" className={inputCls(!!errors.phone)} placeholder="10-digit mobile" />
-                </Field>
-                <Field label="Gender *" error={errors.gender?.message}>
-                  <select {...register('gender')} className={inputCls(!!errors.gender)}>
-                    <option value="">Select gender</option>
-                    <option value="male">Male</option>
-                    <option value="female">Female</option>
-                    <option value="other">Other</option>
-                  </select>
-                </Field>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="Date of Birth" error={errors.dob?.message}>
-                  <input {...register('dob')} type="date" className={inputCls(!!errors.dob)} />
-                </Field>
-                <Field label="Blood Group" error={errors.blood_group?.message}>
-                  <select {...register('blood_group')} className={inputCls(false)}>
-                    <option value="">Unknown</option>
-                    {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(bg => (
-                      <option key={bg} value={bg}>{bg}</option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
-
-              <Field label="Email" error={errors.email?.message}>
-                <input {...register('email')} type="email" className={inputCls(!!errors.email)} placeholder="patient@email.com" />
-              </Field>
-
-              <Field label="Address" error={errors.address?.message}>
-                <textarea {...register('address')} rows={2} className={inputCls(false) + ' resize-none'} placeholder="Full address" />
-              </Field>
-
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="Insurance Provider" error={errors.insurance_provider?.message}>
-                  <input {...register('insurance_provider')} className={inputCls(false)} placeholder="e.g. Star Health" />
-                </Field>
-                <Field label="Insurance ID" error={errors.insurance_id?.message}>
-                  <input {...register('insurance_id')} className={inputCls(false)} placeholder="Policy number" />
-                </Field>
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setShowForm(false)}
-                  className="flex-1 border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-50">
-                  Cancel
-                </button>
-                <button type="submit" disabled={isPending}
-                  className="flex-1 bg-primary text-white py-2.5 rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
-                  {isPending ? 'Registering…' : 'Register Patient'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <RegisterPatientModal
+          onClose={() => setShowForm(false)}
+          onSuccess={() => setShowForm(false)}
+        />
       )}
     </div>
   )
-}
-
-function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="block text-xs font-medium text-gray-700 mb-1">{label}</label>
-      {children}
-      {error && <p className="text-xs text-red-600 mt-0.5">{error}</p>}
-    </div>
-  )
-}
-
-function inputCls(hasError: boolean) {
-  return `w-full border ${hasError ? 'border-red-400' : 'border-gray-300'} rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${hasError ? 'focus:ring-red-200' : 'focus:ring-primary/30'} focus:border-primary`
 }
