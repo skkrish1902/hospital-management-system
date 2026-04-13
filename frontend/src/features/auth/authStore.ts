@@ -15,11 +15,23 @@ interface AuthState {
   refreshToken: string | null
   user: AuthUser | null
   sessionExpired: boolean
+  /**
+   * Feature keys enabled for this tenant, as embedded in the JWT.
+   * null  = old token (pre-Phase 2) — treat as full access during transition.
+   * []    = new token, tenant has no features enabled.
+   * [...] = new token, specific enabled features.
+   */
+  features: string[] | null
   setTokens: (access: string, refresh: string) => void
   setUser: (user: AuthUser) => void
   logout: () => void
   markSessionExpired: () => void
   isAuthenticated: () => boolean
+  /**
+   * Returns true if the tenant has the given feature enabled.
+   * Always returns true when features is null (old token / transition window).
+   */
+  hasFeature: (key: string) => boolean
 }
 
 function parseJwt(token: string): Record<string, unknown> {
@@ -38,12 +50,18 @@ export const useAuthStore = create<AuthState>()(
       refreshToken: null,
       user: null,
       sessionExpired: false,
+      features: null,
 
       setTokens: (access: string, refresh: string) => {
         const payload = parseJwt(access)
+        // features may be absent in old tokens — keep null so hasFeature allows all
+        const features = Array.isArray(payload.features)
+          ? (payload.features as string[])
+          : null
         set({
           accessToken: access,
           refreshToken: refresh,
+          features,
           user: {
             id: payload.sub as string,
             email: '',
@@ -57,9 +75,9 @@ export const useAuthStore = create<AuthState>()(
 
       setUser: (user: AuthUser) => set({ user }),
 
-      logout: () => set({ accessToken: null, refreshToken: null, user: null, sessionExpired: false }),
+      logout: () => set({ accessToken: null, refreshToken: null, user: null, sessionExpired: false, features: null }),
 
-      markSessionExpired: () => set({ accessToken: null, refreshToken: null, user: null, sessionExpired: true }),
+      markSessionExpired: () => set({ accessToken: null, refreshToken: null, user: null, sessionExpired: true, features: null }),
 
       isAuthenticated: () => {
         const token = get().accessToken
@@ -69,6 +87,13 @@ export const useAuthStore = create<AuthState>()(
         if (!exp) return false
         return Date.now() / 1000 < exp
       },
+
+      hasFeature: (key: string) => {
+        const features = get().features
+        // null = old token (pre-entitlements) → allow everything during transition
+        if (features === null) return true
+        return features.includes(key)
+      },
     }),
     {
       name: 'hospital-auth',
@@ -76,6 +101,7 @@ export const useAuthStore = create<AuthState>()(
         accessToken: state.accessToken,
         refreshToken: state.refreshToken,
         user: state.user,
+        features: state.features,
         // sessionExpired is intentionally not persisted — always starts false on page load
       }),
     },

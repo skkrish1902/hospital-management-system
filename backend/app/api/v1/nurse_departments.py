@@ -9,13 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user, require_role
+from app.core.dependencies import get_current_user, require_role, require_feature
 from app.db.engine import get_session
 from app.models.tenant.department import Department
 from app.models.tenant.nurse_department import NurseDepartment
 from app.schemas.nurse_department import NurseDepartmentAssign, NurseDepartmentRead
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_feature("nurse_roster"))])
 
 
 async def _enrich(nd: NurseDepartment, session: AsyncSession) -> NurseDepartmentRead:

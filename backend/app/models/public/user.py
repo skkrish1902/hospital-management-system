@@ -18,6 +18,8 @@ class Tenant(Base, TimestampMixin):
     schema_name: Mapped[str] = mapped_column(String(63), unique=True, nullable=False)
     hospital_name: Mapped[str] = mapped_column(String(255), nullable=False)
     contact_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    plan: Mapped[str] = mapped_column(String(50), default="enterprise", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     users: Mapped[list["User"]] = relationship("User", back_populates="tenant")

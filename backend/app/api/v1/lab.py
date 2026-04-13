@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import require_role
+from app.core.dependencies import require_role, require_feature
 from app.db.engine import get_session
 from app.models.tenant.doctor import Doctor
 from app.models.tenant.lab_order import LabOrder, LabResult
@@ -18,7 +18,7 @@ from app.models.tenant.visit import Visit
 from app.schemas.lab import LabOrderCreate, LabOrderRead, LabResultCreate, LabResultRead
 from app.websocket.manager import ws_manager
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_feature("lab"))])
 
 ALLOWED_MIME = {"application/pdf", "image/jpeg", "image/png", "image/jpg"}
 

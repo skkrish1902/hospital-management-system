@@ -3,10 +3,12 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decode_token
 from app.db.engine import get_session
+from app.core.redis_client import get_cached_features, set_cached_features
 
 bearer_scheme = HTTPBearer()
 
@@ -39,6 +41,82 @@ def require_role(*roles: str):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Insufficient permissions",
+            )
+        return current_user
+
+    return _check
+
+
+async def require_tenant_user(
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """
+    Blocks super_admin from all tenant-scoped endpoints.
+    super_admin operates exclusively through /super/* routes and has no
+    tenant schema context, so any attempt to reach tenant data must be
+    rejected at the backend regardless of frontend state.
+    """
+    if current_user.get("role") == "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super admin cannot access tenant resources.",
+        )
+    return current_user
+
+
+def require_feature(feature: str):
+    """
+    Dependency factory: enforces that the authenticated tenant has a feature enabled.
+
+    Enforcement order (most authoritative first):
+      1. Redis cache — populated on login and refreshed every 5 min. Invalidated
+         immediately when a super_admin toggles a feature, so disabling a feature
+         takes effect for all active sessions within seconds.
+      2. Database — fallback when the cache key is absent (first request after
+         invalidation or after a Redis restart). Result is written back to cache.
+
+    The JWT features claim is intentionally NOT trusted here; it can be up to
+    60 minutes stale. Redis is the source of truth for live enforcement.
+    """
+
+    async def _check(
+        current_user: Annotated[dict, Depends(get_current_user)],
+        session: Annotated[AsyncSession, Depends(get_session)],
+    ) -> dict:
+        import uuid
+        from app.models.public.tenant_feature import TenantFeature
+
+        tenant_id_str = current_user.get("tenant_id")
+        # Graceful fallback: if the JWT has no tenant_id (old tokens or super_admin)
+        # fall back to the stale JWT features list.
+        if not tenant_id_str:
+            features = current_user.get("features")
+            if features is not None and feature not in features:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Feature '{feature}' is not enabled for your hospital's plan.",
+                )
+            return current_user
+
+        tenant_id = uuid.UUID(tenant_id_str)
+
+        # 1. Try Redis cache
+        cached = await get_cached_features(tenant_id)
+        if cached is not None:
+            enabled = cached
+        else:
+            # 2. Read from DB and populate cache
+            rows = await session.execute(
+                select(TenantFeature.feature)
+                .where(TenantFeature.tenant_id == tenant_id, TenantFeature.enabled == True)  # noqa: E712
+            )
+            enabled = [row[0] for row in rows.fetchall()]
+            await set_cached_features(tenant_id, enabled)
+
+        if feature not in enabled:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Feature '{feature}' is not enabled for your hospital's plan.",
             )
         return current_user
 

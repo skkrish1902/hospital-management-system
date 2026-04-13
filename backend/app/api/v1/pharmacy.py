@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import require_role
+from app.core.dependencies import require_role, require_feature
 from app.db.engine import get_session
 from app.models.tenant.patient import Patient
 from app.models.tenant.pharmacy_queue import PharmacyQueue
@@ -18,7 +18,7 @@ from app.models.tenant.visit import Visit
 from app.schemas.pharmacy import PharmacyQueueRead, PharmacyStatusUpdate
 from app.websocket.manager import ws_manager
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_feature("pharmacy"))])
 
 
 @router.get("", response_model=List[PharmacyQueueRead])

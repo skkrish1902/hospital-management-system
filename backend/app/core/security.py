@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import secrets
 import string
+import uuid
 from typing import Any, Dict, Optional
 
 from jose import JWTError, jwt
@@ -41,8 +42,9 @@ def create_access_token(subject: str, extra_claims: Optional[Dict[str, Any]] = N
 
 
 def create_refresh_token(subject: str) -> str:
+    jti = str(uuid.uuid4())  # Unique token ID — used for blocklist on logout
     expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    payload = {"sub": subject, "exp": expire, "type": "refresh"}
+    payload = {"sub": subject, "exp": expire, "type": "refresh", "jti": jti}
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 

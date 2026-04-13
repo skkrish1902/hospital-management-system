@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import require_role
+from app.core.dependencies import require_role, require_feature
 from app.db.engine import get_session
 from app.models.tenant.patient import Patient
 from app.models.tenant.visit import Visit
@@ -15,7 +15,7 @@ from app.models.tenant.vitals import Vitals
 from app.schemas.vitals import VitalsCreate, VitalsRead
 from app.websocket.manager import ws_manager
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_feature("vitals"))])
 
 
 @router.post("", response_model=VitalsRead, status_code=status.HTTP_201_CREATED)

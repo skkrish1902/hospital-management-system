@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     CLOUDINARY_API_SECRET: str = ""
 
     # Notifications (optional)
+    # Twilio (optional — used for SMS / WhatsApp notifications)
     TWILIO_ACCOUNT_SID: str = ""
     TWILIO_AUTH_TOKEN: str = ""
     TWILIO_SMS_FROM_NUMBER: str = ""

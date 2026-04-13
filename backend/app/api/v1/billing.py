@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import require_role
+from app.core.dependencies import require_role, require_feature
 from app.core.razorpay_service import create_razorpay_order, fetch_order_payments, verify_webhook_signature
 from app.db.engine import AsyncSessionLocal, get_session, tenant_schema_var
 from app.models.tenant.invoice import Invoice
@@ -22,7 +22,12 @@ from app.websocket.manager import ws_manager
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+# Protected router — requires billing feature enabled in tenant's plan
+router = APIRouter(dependencies=[Depends(require_feature("billing"))])
+
+# Public router — Razorpay webhook must be reachable without JWT
+# (Razorpay's servers call this directly; auth is via HMAC signature)
+webhook_router = APIRouter()
 
 
 @router.get("", response_model=List[InvoiceRead])
@@ -282,7 +287,7 @@ async def admit_patient_manually(
     return invoice
 
 
-@router.post("/razorpay/webhook", include_in_schema=True, status_code=200)
+@webhook_router.post("/razorpay/webhook", include_in_schema=True, status_code=200)
 async def razorpay_webhook(request: Request):
     """
     Razorpay webhook receiver.

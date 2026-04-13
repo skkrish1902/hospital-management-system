@@ -153,6 +153,7 @@ async def onboard_doctor(
         full_name=new_user.full_name,
         username=new_user.username,
         password=temp_password,
+        hospital_name=tenant.hospital_name if tenant else tenant_schema,
     )
 
     enriched.temp_password = temp_password

@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.db.engine import init_db
 from app.middleware.tenant import TenantMiddleware
+from app.middleware.audit import AuditLogMiddleware
 from app.websocket.manager import ws_manager
 from app.websocket.redis_bridge import start_redis_subscriber
 from app.api.v1.router import api_router
@@ -42,6 +43,9 @@ app.add_middleware(
 
 # Tenant resolution middleware (must come after CORS)
 app.add_middleware(TenantMiddleware)
+
+# Audit log middleware — writes to public.audit_log for every mutating request
+app.add_middleware(AuditLogMiddleware)
 
 # API routes
 app.include_router(api_router, prefix="/api/v1")

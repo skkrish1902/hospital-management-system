@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import require_role
+from app.core.dependencies import require_role, require_feature
 from app.db.engine import get_session
 from app.models.tenant.appointment import Appointment
 from app.models.tenant.doctor import Doctor
@@ -33,7 +33,7 @@ from app.schemas.appointment import (
 from app.core.razorpay_service import create_razorpay_order
 from app.websocket.manager import ws_manager
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_feature("appointments"))])
 
 # Clinic operating hours — slots are generated in IST (UTC+5:30) and stored as UTC.
 _SLOT_DURATION_MINUTES = 15

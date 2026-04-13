@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user, require_role
+from app.core.dependencies import get_current_user, require_role, require_feature
 from app.core.razorpay_service import create_razorpay_order
 from app.db.engine import get_session
 from app.models.tenant.department import Department
@@ -28,7 +28,7 @@ from app.models.tenant.visit import Visit
 from app.schemas.queue import CancelTokenRequest, QueueTokenCreate, QueueTokenRead, QueueTokenStatusUpdate, QueueTokenUpdate
 from app.websocket.manager import ws_manager
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_feature("opd_queue"))])
 
 _PRIORITY_ORDER = {"emergency": 0, "senior_citizen": 1, "normal": 2}
 

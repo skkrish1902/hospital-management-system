@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import ProtectedRoute from '@/components/shared/ProtectedRoute'
 import RoleGuard from '@/components/shared/RoleGuard'
+import FeatureGuard from '@/components/shared/FeatureGuard'
 import AppLayout from '@/components/shared/Layout'
 import LoginPage from '@/features/auth/LoginPage'
 import PatientsPage from '@/features/patients/PatientsPage'
@@ -18,10 +19,12 @@ import ChangePasswordPage from '@/features/auth/ChangePasswordPage'
 import PharmacyPage from '@/features/pharmacy/PharmacyPage'
 import LabPage from '@/features/lab/LabPage'
 import AdminDashboard from '@/features/admin/AdminDashboard'
+import TenantsPage from '@/features/super_admin/TenantsPage'
+import RequisitionsPage from '@/features/requisitions/RequisitionsPage'
 
 import { useAuthStore } from '@/features/auth/authStore'
 
-const ADMIN = ['hospital_admin', 'super_admin']
+const ADMIN = ['hospital_admin']
 const DOCTOR = ['doctor', ...ADMIN]
 const NURSE = ['nurse', ...ADMIN]
 const LAB = ['lab_technician', ...ADMIN]
@@ -29,6 +32,7 @@ const PHARMACY = ['pharmacist', ...ADMIN]
 const BILLING = ['billing_officer', ...ADMIN]
 const RECEPTION = ['receptionist', ...ADMIN]
 const CLINICAL = ['receptionist', 'nurse', 'doctor', ...ADMIN]
+const ALL_STAFF = ['hospital_admin', 'receptionist', 'nurse', 'doctor', 'lab_technician', 'pharmacist', 'billing_officer']
 
 // Remaining placeholder pages
 function Dashboard() {
@@ -38,7 +42,8 @@ function Dashboard() {
   if (role === 'pharmacist') return <Navigate to="/pharmacy" replace />
   if (role === 'lab_technician') return <Navigate to="/lab" replace />
   if (role === 'receptionist') return <Navigate to="/patients" replace />
-  if (role === 'hospital_admin' || role === 'super_admin') return <AdminDashboard />
+  if (role === 'hospital_admin') return <AdminDashboard />
+  if (role === 'super_admin') return <Navigate to="/super/hospitals" replace />
   return <div className="p-6"><h1 className="text-2xl font-semibold">Command Center</h1></div>
 }
 const RosterPage = () => <div className="p-6"><h1 className="text-2xl font-semibold">Nurse Roster</h1></div>
@@ -94,18 +99,20 @@ export default function App() {
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/patients" element={<RoleGuard allowed={CLINICAL}><PatientsPage /></RoleGuard>} />
-            <Route path="/appointments" element={<RoleGuard allowed={[...RECEPTION, 'nurse', 'doctor']}><AppointmentsPage /></RoleGuard>} />
-            <Route path="/queue" element={<RoleGuard allowed={[...RECEPTION, 'nurse']}><QueuePage /></RoleGuard>} />
-            <Route path="/nurse/vitals" element={<RoleGuard allowed={NURSE}><NurseVitalsPage /></RoleGuard>} />
-            <Route path="/nurse/roster" element={<RoleGuard allowed={NURSE}><RosterPage /></RoleGuard>} />
+            <Route path="/appointments" element={<FeatureGuard feature="appointments"><RoleGuard allowed={[...RECEPTION, 'nurse', 'doctor']}><AppointmentsPage /></RoleGuard></FeatureGuard>} />
+            <Route path="/queue" element={<FeatureGuard feature="opd_queue"><RoleGuard allowed={[...RECEPTION, 'nurse']}><QueuePage /></RoleGuard></FeatureGuard>} />
+            <Route path="/nurse/vitals" element={<FeatureGuard feature="vitals"><RoleGuard allowed={NURSE}><NurseVitalsPage /></RoleGuard></FeatureGuard>} />
+            <Route path="/nurse/roster" element={<FeatureGuard feature="nurse_roster"><RoleGuard allowed={NURSE}><RosterPage /></RoleGuard></FeatureGuard>} />
             <Route path="/doctor/consultation" element={<RoleGuard allowed={DOCTOR}><ConsultationPage /></RoleGuard>} />
             <Route path="/doctor/consultation/:visitId" element={<RoleGuard allowed={DOCTOR}><ConsultationPage /></RoleGuard>} />
             <Route path="/doctor/prescription/:visitId" element={<RoleGuard allowed={DOCTOR}><PrescriptionPage /></RoleGuard>} />
-            <Route path="/lab" element={<RoleGuard allowed={LAB}><LabPage /></RoleGuard>} />
-            <Route path="/pharmacy" element={<RoleGuard allowed={PHARMACY}><PharmacyPage /></RoleGuard>} />
-            <Route path="/billing" element={<RoleGuard allowed={BILLING}><BillingPage /></RoleGuard>} />
+            <Route path="/lab" element={<FeatureGuard feature="lab"><RoleGuard allowed={LAB}><LabPage /></RoleGuard></FeatureGuard>} />
+            <Route path="/pharmacy" element={<FeatureGuard feature="pharmacy"><RoleGuard allowed={PHARMACY}><PharmacyPage /></RoleGuard></FeatureGuard>} />
+            <Route path="/billing" element={<FeatureGuard feature="billing"><RoleGuard allowed={BILLING}><BillingPage /></RoleGuard></FeatureGuard>} />
+            <Route path="/requisitions" element={<RoleGuard allowed={ALL_STAFF}><RequisitionsPage /></RoleGuard>} />
             <Route path="/admin/doctors" element={<RoleGuard allowed={ADMIN}><DoctorsAdminPage /></RoleGuard>} />
             <Route path="/admin/users" element={<RoleGuard allowed={['hospital_admin']}><UsersAdminPage /></RoleGuard>} />
+            <Route path="/super/hospitals" element={<RoleGuard allowed={['super_admin']}><TenantsPage /></RoleGuard>} />
             <Route path="/change-password" element={<ChangePasswordPage />} />
           </Route>
         </Route>

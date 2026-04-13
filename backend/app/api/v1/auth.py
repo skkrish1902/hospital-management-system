@@ -1,15 +1,32 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select, text
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.engine import get_session
 from app.core.dependencies import get_current_user
 from app.core.security import verify_password, hash_password, create_access_token, create_refresh_token, decode_token
+from app.core.redis_client import block_token, is_token_blocked, set_cached_features
 from app.models.public.user import User, Tenant
+from app.models.public.tenant_feature import TenantFeature
 from app.schemas.auth import LoginRequest, TokenResponse, RefreshRequest
 
 router = APIRouter()
+
+
+async def _load_enabled_features(tenant_id, session: AsyncSession) -> list[str]:
+    """
+    Return the list of feature keys that are enabled for this tenant.
+    Called by both login and refresh so the JWT and Redis cache are always consistent.
+    """
+    rows = await session.execute(
+        select(TenantFeature.feature)
+        .where(TenantFeature.tenant_id == tenant_id, TenantFeature.enabled == True)  # noqa: E712
+    )
+    features = [row[0] for row in rows.fetchall()]
+    # Warm the Redis feature cache so require_feature reads from Redis, not the JWT
+    await set_cached_features(tenant_id, features)
+    return features
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -29,23 +46,35 @@ async def login(payload: LoginRequest, session: AsyncSession = Depends(get_sessi
             detail="Invalid email/username or password",
         )
 
-    # Fetch tenant schema
-    tenant_result = await session.execute(
-        select(Tenant).where(Tenant.id == user.tenant_id)
-    )
-    tenant = tenant_result.scalar_one_or_none()
-    if not tenant or not tenant.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Hospital account is inactive",
+    # super_admin is a platform operator — not bound to any hospital tenant.
+    if user.role == "super_admin":
+        extra_claims = {
+            "role": "super_admin",
+            "tenant_schema": "",
+            "hospital_name": "",
+            "full_name": user.full_name,
+            "features": [],
+        }
+    else:
+        # Fetch the hospital tenant and enforce it must be active.
+        tenant_result = await session.execute(
+            select(Tenant).where(Tenant.id == user.tenant_id)
         )
+        tenant = tenant_result.scalar_one_or_none()
+        if not tenant or not tenant.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Hospital account is inactive",
+            )
+        extra_claims = {
+            "role": user.role,
+            "tenant_id": str(user.tenant_id),
+            "tenant_schema": tenant.schema_name,
+            "hospital_name": tenant.hospital_name,
+            "full_name": user.full_name,
+            "features": await _load_enabled_features(user.tenant_id, session),
+        }
 
-    extra_claims = {
-        "role": user.role,
-        "tenant_schema": tenant.schema_name,
-        "hospital_name": tenant.hospital_name,
-        "full_name": user.full_name,
-    }
     access_token = create_access_token(subject=str(user.id), extra_claims=extra_claims)
     refresh_token = create_refresh_token(subject=str(user.id))
 
@@ -62,6 +91,11 @@ async def refresh(payload: RefreshRequest, session: AsyncSession = Depends(get_s
     except (JWTError, ValueError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
+    # Blocklist check — reject logged-out tokens immediately
+    jti = token_data.get("jti")
+    if jti and await is_token_blocked(jti):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
+
     result = await session.execute(
         select(User).where(User.id == token_data["sub"], User.is_active == True)  # noqa: E712
     )
@@ -69,13 +103,58 @@ async def refresh(payload: RefreshRequest, session: AsyncSession = Depends(get_s
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-    tenant_result = await session.execute(select(Tenant).where(Tenant.id == user.tenant_id))
-    tenant = tenant_result.scalar_one_or_none()
+    if user.role == "super_admin":
+        extra_claims = {
+            "role": "super_admin",
+            "tenant_schema": "",
+            "hospital_name": "",
+            "full_name": user.full_name,
+            "features": [],
+        }
+    else:
+        tenant_result = await session.execute(select(Tenant).where(Tenant.id == user.tenant_id))
+        tenant = tenant_result.scalar_one_or_none()
+        if not tenant or not tenant.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Hospital account is inactive")
+        extra_claims = {
+            "role": user.role,
+            "tenant_id": str(user.tenant_id),
+            "tenant_schema": tenant.schema_name,
+            "hospital_name": tenant.hospital_name,
+            "full_name": user.full_name,
+            "features": await _load_enabled_features(user.tenant_id, session),
+        }
 
-    extra_claims = {"role": user.role, "tenant_schema": tenant.schema_name, "hospital_name": tenant.hospital_name, "full_name": user.full_name}
     access_token = create_access_token(subject=str(user.id), extra_claims=extra_claims)
     new_refresh = create_refresh_token(subject=str(user.id))
     return TokenResponse(access_token=access_token, refresh_token=new_refresh)
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(payload: LogoutRequest):
+    """
+    Revoke a refresh token by adding its JTI to the Redis blocklist.
+    The blocklist entry expires when the token itself would have expired,
+    so Redis memory is self-managed.
+    """
+    from datetime import datetime, timezone
+    from jose import JWTError
+    try:
+        token_data = decode_token(payload.refresh_token)
+    except JWTError:
+        # Already invalid — treat as successfully logged out
+        return
+
+    jti = token_data.get("jti")
+    exp = token_data.get("exp")
+    if jti and exp:
+        remaining = int(exp - datetime.now(timezone.utc).timestamp())
+        if remaining > 0:
+            await block_token(jti, remaining)
 
 
 class ChangePasswordRequest(BaseModel):
