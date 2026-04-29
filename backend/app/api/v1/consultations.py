@@ -52,11 +52,13 @@ async def create_consultation(
                 import json
                 parsed = json.loads(diag)
                 if isinstance(parsed, list):
-                    data["diagnosis_icd10"] = parsed
+                    data["diagnosis_icd10"] = parsed if parsed else None
             except Exception:
                 data["diagnosis_icd10"] = None
     elif diag is not None and not isinstance(diag, list):
         data["diagnosis_icd10"] = [diag] if diag else None
+    elif isinstance(diag, list) and len(diag) == 0:
+        data["diagnosis_icd10"] = None
     
     consult = Consultation(id=uuid.uuid4(), uhid=patient.uhid if patient else None, **data)
     session.add(consult)
@@ -95,13 +97,13 @@ async def update_consultation(
                     import json
                     parsed = json.loads(diag)
                     if isinstance(parsed, list):
-                        data["diagnosis_icd10"] = parsed
+                        data["diagnosis_icd10"] = parsed if parsed else None
                 except Exception:
                     data["diagnosis_icd10"] = None
         elif diag is not None and not isinstance(diag, list):
             data["diagnosis_icd10"] = [diag] if diag else None
-        elif data["diagnosis_icd10"] is not None and not isinstance(data["diagnosis_icd10"], list):
-            data["diagnosis_icd10"] = [data["diagnosis_icd10"]] if data["diagnosis_icd10"] else None
+        elif isinstance(diag, list) and len(diag) == 0:
+            data["diagnosis_icd10"] = None
     
     for field, value in data.items():
         setattr(consult, field, value)

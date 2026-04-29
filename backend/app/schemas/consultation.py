@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 
 
 class ConsultationCreate(BaseModel):
@@ -12,6 +12,25 @@ class ConsultationCreate(BaseModel):
     examination: Optional[str] = None
     # e.g. [{"code": "J06.9", "description": "Acute upper respiratory infection"}]
     diagnosis_icd10: Optional[List[Dict[str, Any]]] = None
+
+    @validator("diagnosis_icd10", pre=True)
+    def empty_icd_to_none(cls, v):
+        if v in (None, "", "null"): return None
+        if v == []: return None
+        if isinstance(v, str):
+            import json
+            try:
+                parsed = json.loads(v)
+                if parsed == []:
+                    return None
+                return parsed
+            except Exception:
+                return None
+        if isinstance(v, list) and all(
+            (not d or (isinstance(d, dict) and not d.get("code") and not d.get("description"))) for d in v
+        ):
+            return None
+        return v
     notes: Optional[str] = None
     follow_up_date: Optional[date] = None
 
@@ -21,6 +40,25 @@ class ConsultationUpdate(BaseModel):
     history: Optional[str] = None
     examination: Optional[str] = None
     diagnosis_icd10: Optional[List[Dict[str, Any]]] = None
+
+    @validator("diagnosis_icd10", pre=True)
+    def empty_icd_to_none(cls, v):
+        if v in (None, "", "null"): return None
+        if v == []: return None
+        if isinstance(v, str):
+            import json
+            try:
+                parsed = json.loads(v)
+                if parsed == []:
+                    return None
+                return parsed
+            except Exception:
+                return None
+        if isinstance(v, list) and all(
+            (not d or (isinstance(d, dict) and not d.get("code") and not d.get("description"))) for d in v
+        ):
+            return None
+        return v
     notes: Optional[str] = None
     follow_up_date: Optional[date] = None
 
@@ -37,3 +75,23 @@ class ConsultationRead(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @validator("diagnosis_icd10", pre=True)
+    def normalize_empty_icd(cls, v):
+        """Convert empty arrays and string arrays to None for response."""
+        if v in (None, "", "null"): 
+            return None
+        if v == [] or v == "[]": 
+            return None
+        if isinstance(v, str):
+            import json
+            try:
+                parsed = json.loads(v)
+                if parsed == []:
+                    return None
+                return parsed
+            except Exception:
+                return None
+        if isinstance(v, list) and len(v) == 0:
+            return None
+        return v
