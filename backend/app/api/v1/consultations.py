@@ -41,7 +41,24 @@ async def create_consultation(
         )
 
     patient = await session.get(Patient, visit.patient_id)
-    consult = Consultation(id=uuid.uuid4(), uhid=patient.uhid if patient else None, **payload.model_dump())
+    data = payload.model_dump()
+    # Defensive normalization for diagnosis_icd10
+    diag = data.get("diagnosis_icd10")
+    if isinstance(diag, str):
+        if diag.strip() in ("null", "", "[]"):
+            data["diagnosis_icd10"] = None
+        else:
+            try:
+                import json
+                parsed = json.loads(diag)
+                if isinstance(parsed, list):
+                    data["diagnosis_icd10"] = parsed
+            except Exception:
+                data["diagnosis_icd10"] = None
+    elif diag is not None and not isinstance(diag, list):
+        data["diagnosis_icd10"] = [diag] if diag else None
+    
+    consult = Consultation(id=uuid.uuid4(), uhid=patient.uhid if patient else None, **data)
     session.add(consult)
 
     # Advance visit status
@@ -66,7 +83,27 @@ async def update_consultation(
     if not consult:
         raise HTTPException(status_code=404, detail="Consultation not found for this visit")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    # Defensive normalization for diagnosis_icd10
+    if "diagnosis_icd10" in data:
+        diag = data["diagnosis_icd10"]
+        if isinstance(diag, str):
+            if diag.strip() in ("null", "", "[]"):
+                data["diagnosis_icd10"] = None
+            else:
+                try:
+                    import json
+                    parsed = json.loads(diag)
+                    if isinstance(parsed, list):
+                        data["diagnosis_icd10"] = parsed
+                except Exception:
+                    data["diagnosis_icd10"] = None
+        elif diag is not None and not isinstance(diag, list):
+            data["diagnosis_icd10"] = [diag] if diag else None
+        elif data["diagnosis_icd10"] is not None and not isinstance(data["diagnosis_icd10"], list):
+            data["diagnosis_icd10"] = [data["diagnosis_icd10"]] if data["diagnosis_icd10"] else None
+    
+    for field, value in data.items():
         setattr(consult, field, value)
 
     await session.commit()

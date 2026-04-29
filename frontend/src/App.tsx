@@ -32,7 +32,7 @@ const PHARMACY = ['pharmacist', ...ADMIN]
 const BILLING = ['billing_officer', ...ADMIN]
 const RECEPTION = ['receptionist', ...ADMIN]
 const CLINICAL = ['receptionist', 'nurse', 'doctor', ...ADMIN]
-const ALL_STAFF = ['hospital_admin', 'receptionist', 'nurse', 'doctor', 'lab_technician', 'pharmacist', 'billing_officer']
+const ALL_STAFF = ['hospital_admin', 'receptionist', 'nurse', 'doctor', 'lab_technician', 'pharmacist', 'billing_officer', 'store_manager']
 
 // Remaining placeholder pages
 function Dashboard() {
@@ -43,6 +43,7 @@ function Dashboard() {
   if (role === 'lab_technician') return <Navigate to="/lab" replace />
   if (role === 'receptionist') return <Navigate to="/patients" replace />
   if (role === 'hospital_admin') return <AdminDashboard />
+  if (role === 'store_manager') return <Navigate to="/indent" replace />
   if (role === 'super_admin') return <Navigate to="/super/hospitals" replace />
   return <div className="p-6"><h1 className="text-2xl font-semibold">Command Center</h1></div>
 }
@@ -109,7 +110,7 @@ export default function App() {
             <Route path="/lab" element={<FeatureGuard feature="lab"><RoleGuard allowed={LAB}><LabPage /></RoleGuard></FeatureGuard>} />
             <Route path="/pharmacy" element={<FeatureGuard feature="pharmacy"><RoleGuard allowed={PHARMACY}><PharmacyPage /></RoleGuard></FeatureGuard>} />
             <Route path="/billing" element={<FeatureGuard feature="billing"><RoleGuard allowed={BILLING}><BillingPage /></RoleGuard></FeatureGuard>} />
-            <Route path="/requisitions" element={<RoleGuard allowed={ALL_STAFF}><RequisitionsPage /></RoleGuard>} />
+            <Route path="/indent" element={<RoleGuard allowed={ALL_STAFF}><RequisitionsPage /></RoleGuard>} />
             <Route path="/admin/doctors" element={<RoleGuard allowed={ADMIN}><DoctorsAdminPage /></RoleGuard>} />
             <Route path="/admin/users" element={<RoleGuard allowed={['hospital_admin']}><UsersAdminPage /></RoleGuard>} />
             <Route path="/super/hospitals" element={<RoleGuard allowed={['super_admin']}><TenantsPage /></RoleGuard>} />

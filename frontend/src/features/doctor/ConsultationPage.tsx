@@ -4,9 +4,9 @@
  * Shows: patient info, vitals summary, SOAP notes form, ICD-10 diagnosis
  * Handles visits with status "vitals_done" → moves to "in_consultation" when opened
  */
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { useForm, useFieldArray } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -14,7 +14,7 @@ import { visitService, vitalsService, consultationService } from '@/services/vis
 import { patientService } from '@/services/patientService'
 import { labService } from '@/services/labService'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import type { Visit, Vitals, PatientHistoryItem } from '@/types/common'
+import type { Visit, Vitals, PatientHistoryItem, Consultation } from '@/types/common'
 
 function PriorityBadge({ priority }: { priority?: string }) {
   if (!priority || priority === 'normal') return null
@@ -74,11 +74,13 @@ function ReportButton({ orderId }: { orderId: string }) {
 
 export default function ConsultationPage() {
   const [selectedVisit, setSelectedVisit] = useState<Visit | null>(null)
+  const [existingConsultation, setExistingConsultation] = useState<Consultation | null>(null)
   const [vitals, setVitals] = useState<Vitals | null>(null)
   const [completedOpen, setCompletedOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'consultation' | 'history'>('consultation')
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const location = useLocation()
 
   const { data: visits = [], refetch } = useQuery({
     queryKey: ['visits', 'vitals_done'],
@@ -145,6 +147,7 @@ export default function ConsultationPage() {
 
   const selectVisit = async (v: Visit) => {
     setSelectedVisit(v)
+    setExistingConsultation(null)
     setActiveTab('consultation')
     reset()
     try {
@@ -154,6 +157,45 @@ export default function ConsultationPage() {
       setVitals(null)
     }
   }
+
+  // Resume editing an already-saved consultation (coming back from PrescriptionPage)
+  const resumeVisit = async (v: Visit) => {
+    setSelectedVisit(v)
+    setActiveTab('consultation')
+    try {
+      const [vData, consult] = await Promise.all([
+        vitalsService.get(v.id).catch(() => null),
+        consultationService.get(v.id).catch(() => null),
+      ])
+      setVitals(vData)
+      setExistingConsultation(consult)
+      reset({
+        chief_complaint: consult?.chief_complaint ?? '',
+        history: consult?.history ?? '',
+        examination: consult?.examination ?? '',
+        notes: consult?.notes ?? '',
+        follow_up_date: consult?.follow_up_date ?? '',
+        diagnoses: (consult?.diagnosis_icd10 as { code: string; description: string }[]) ?? [],
+      })
+    } catch {
+      setVitals(null)
+      setExistingConsultation(null)
+      reset()
+    }
+  }
+
+  // Auto-resume when navigated back from PrescriptionPage
+  useEffect(() => {
+    const resumeId = (location.state as { resumeVisitId?: string } | null)?.resumeVisitId
+    if (!resumeId) return
+    // Find the visit in in_consultation list (already saved consultation, pending prescription)
+    const match = inConsultationVisits.find(v => v.id === resumeId)
+    if (!match) return
+    // Clear navigation state so we don't retrigger on re-render
+    window.history.replaceState({}, '')
+    resumeVisit(match)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inConsultationVisits, location.state])
 
   const [callingIn, setCallingIn] = useState<string | null>(null)
 
@@ -168,15 +210,27 @@ export default function ConsultationPage() {
   }
 
   const { mutate: saveConsultation, isPending } = useMutation({
-    mutationFn: (data: ConsultForm) => consultationService.create({
-      visit_id: selectedVisit!.id,
-      chief_complaint: data.chief_complaint,
-      history: data.history,
-      examination: data.examination,
-      notes: data.notes,
-      follow_up_date: data.follow_up_date || undefined,
-      diagnosis_icd10: data.diagnoses,
-    }),
+    mutationFn: (data: ConsultForm) => {
+      // If diagnoses is present but all entries are empty, treat as null
+      let cleanedDiagnoses = data.diagnoses
+      if (Array.isArray(cleanedDiagnoses)) {
+        cleanedDiagnoses = cleanedDiagnoses.filter(d => d.code.trim() || d.description.trim())
+        if (cleanedDiagnoses.length === 0) cleanedDiagnoses = undefined
+      }
+      const payload = {
+        visit_id: selectedVisit!.id,
+        chief_complaint: data.chief_complaint,
+        history: data.history,
+        examination: data.examination,
+        notes: data.notes,
+        follow_up_date: data.follow_up_date || undefined,
+        diagnosis_icd10: cleanedDiagnoses,
+      }
+      // Use PATCH if consultation already exists (editing), POST if new
+      return existingConsultation
+        ? consultationService.update(selectedVisit!.id, payload)
+        : consultationService.create(payload)
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['visits'] })
       navigate(`/doctor/prescription/${selectedVisit!.id}`)
@@ -258,8 +312,10 @@ export default function ConsultationPage() {
               {inConsultationVisits.map(v => (
                 <button
                   key={v.id}
-                  onClick={() => navigate(`/doctor/prescription/${v.id}`)}
-                  className="w-full text-left px-4 py-3 hover:bg-amber-50 transition-colors text-sm"
+                  onClick={() => resumeVisit(v)}
+                  className={`w-full text-left px-4 py-3 hover:bg-amber-50 transition-colors text-sm ${
+                    selectedVisit?.id === v.id ? 'bg-amber-50 border-l-2 border-amber-500' : ''
+                  }`}
                 >
                   <div className="flex items-center gap-2 flex-wrap">
                     {v.token_no && (
@@ -268,7 +324,7 @@ export default function ConsultationPage() {
                     <span className="font-medium text-gray-900">{v.patient_name}</span>
                     <PriorityBadge priority={v.priority} />
                   </div>
-                  <p className="text-xs text-amber-600 mt-0.5">Consultation saved — prescription pending</p>
+                  <p className="text-xs text-amber-600 mt-0.5">Consultation saved — click to edit &amp; write prescription</p>
                 </button>
               ))}
             </div>

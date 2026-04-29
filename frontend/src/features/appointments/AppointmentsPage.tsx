@@ -6,7 +6,7 @@
  *   Left: list of today's appointments with status badges + check-in / cancel actions
  *   Right: slot availability grid for selected doctor
  */
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
@@ -39,6 +39,12 @@ const StatusBadge = ({ status }: { status: string }) => (
 const inputCls = 'w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary'
 
 // ── Book Modal ─────────────────────────────────────────────────────────────────
+
+/** Convert 12-hour clock to 24-hour value */
+function to24h(h12: number, ampm: 'AM' | 'PM'): number {
+  if (ampm === 'AM') return h12 === 12 ? 0 : h12
+  return h12 === 12 ? 12 : h12 + 12
+}
 
 const bookSchema = z.object({
   patient_id: z.string().min(1, 'Select a patient'),
@@ -380,14 +386,84 @@ function BookModal({
     ? doctors.filter(d => d.department_id === filterDeptId)
     : doctors
 
-  const { data: slots = [] } = useQuery<AppointmentSlot[]>({
-    queryKey: ['slots', watchedDoctorId, selectedDate],
-    queryFn: () => appointmentService.slots(watchedDoctorId, selectedDate),
-    enabled: !!watchedDoctorId,
-  })
+  // Calendar & time-picker state
+  const [calSelectedDate, setCalSelectedDate] = useState<Date>(() => parseISO(selectedDate))
+  const [pickHour, setPickHour] = useState('9')
+  const [pickMin, setPickMin] = useState('00')
+  const [pickAmPm, setPickAmPm] = useState<'AM' | 'PM'>('AM')
+
+  // Derived: today helpers (re-computed each render — cheap)
+  const todayStr = format(new Date(), 'yyyy-MM-dd')
+  const selStr   = format(calSelectedDate, 'yyyy-MM-dd')
+  const isSelectedToday = selStr === todayStr
+
+  // Auto-correct time forward whenever the selected date changes to today
+  useEffect(() => {
+    const now = new Date()
+    if (format(calSelectedDate, 'yyyy-MM-dd') !== format(now, 'yyyy-MM-dd')) return
+    const nowH = now.getHours()
+    const nowM = now.getMinutes()
+    // If currently in AM but it's already afternoon, switch to PM
+    let ampm: 'AM' | 'PM' = pickAmPm
+    if (ampm === 'AM' && nowH >= 12) ampm = 'PM'
+    const h24 = to24h(parseInt(pickHour, 10), ampm)
+    const m   = parseInt(pickMin, 10)
+    if (h24 < nowH || (h24 === nowH && m <= nowM)) {
+      // advance to the next 5-min slot from now
+      const nextM5 = Math.ceil((nowM + 1) / 5) * 5
+      if (nextM5 < 60) {
+        const h12 = nowH % 12 || 12
+        setPickAmPm(nowH >= 12 ? 'PM' : 'AM')
+        setPickHour(String(h12))
+        setPickMin(String(nextM5).padStart(2, '0'))
+      } else {
+        const nextH24 = nowH + 1
+        setPickAmPm(nextH24 >= 12 ? 'PM' : 'AM')
+        setPickHour(String(nextH24 % 12 || 12))
+        setPickMin('00')
+      }
+    } else if (ampm !== pickAmPm) {
+      setPickAmPm(ampm)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calSelectedDate])
+
+  // Time disabling helpers
+  const nowSnap = new Date()
+  const nowH24  = nowSnap.getHours()
+  const nowMin  = nowSnap.getMinutes()
+
+  const isAmPmDisabled = (p: 'AM' | 'PM') =>
+    isSelectedToday && p === 'AM' && nowH24 >= 12
+
+  const isHourDisabled = (h: number) => {
+    if (!isSelectedToday) return false
+    const h24 = to24h(h, pickAmPm)
+    return h24 < nowH24 || (h24 === nowH24 && nowMin >= 55)
+  }
+
+  const isMinDisabled = (m: number) => {
+    if (!isSelectedToday) return false
+    const h24 = to24h(parseInt(pickHour, 10), pickAmPm)
+    return h24 < nowH24 || (h24 === nowH24 && m <= nowMin)
+  }
 
   // Consultation fee for selected doctor
   const selectedDoctor = doctors.find(d => d.id === watchedDoctorId)
+
+  // Sync slot_time whenever date or time changes
+  useEffect(() => {
+    const h24 = to24h(parseInt(pickHour, 10), pickAmPm)
+    const dt = new Date(
+      calSelectedDate.getFullYear(),
+      calSelectedDate.getMonth(),
+      calSelectedDate.getDate(),
+      h24,
+      parseInt(pickMin, 10),
+      0,
+    )
+    setValue('slot_time', dt.toISOString())
+  }, [calSelectedDate, pickHour, pickMin, pickAmPm, setValue])
 
   const bookMut = useMutation({
     mutationFn: appointmentService.book,
@@ -512,42 +588,128 @@ function BookModal({
             </select>
           </div>
 
-          {/* Slot picker */}
-          {watchedDoctorId && (
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">
-                Available slots — {format(parseISO(selectedDate), 'dd MMM yyyy')}
-              </label>
-              {slots.length === 0 ? (
-                <p className="text-xs text-gray-400">No slots generated. Select a doctor first.</p>
-              ) : (
-                <div className="grid grid-cols-4 gap-1.5">
-                  {slots.map(slot => {
-                    const t = format(parseISO(slot.slot_time), 'HH:mm')
-                    const isSelected = watch('slot_time') === slot.slot_time
+          {/* Date & Time Picker */}
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-gray-700">Appointment Date &amp; Time</label>
+
+            {/* ── Date row ── */}
+            <div className="flex items-center gap-2">
+              {/* Left arrow — only shown when selected date is NOT today */}
+              {!isSelectedToday && (
+                <button
+                  type="button"
+                  onClick={() => setCalSelectedDate(d => subDays(d, 1))}
+                  className="p-2 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-500 flex-shrink-0"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+              )}
+
+              {/* Calendar icon + native date input */}
+              <div className="flex-1 flex items-center border border-gray-300 rounded-lg bg-white overflow-hidden">
+                <svg className="w-4 h-4 text-gray-400 ml-3 flex-shrink-0 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <input
+                  type="date"
+                  value={selStr}
+                  min={todayStr}
+                  onChange={e => {
+                    if (e.target.value) setCalSelectedDate(new Date(e.target.value + 'T00:00:00'))
+                  }}
+                  className="flex-1 px-3 py-2 text-sm text-gray-700 bg-transparent focus:outline-none cursor-pointer"
+                />
+              </div>
+
+              {/* Right arrow — always shown */}
+              <button
+                type="button"
+                onClick={() => setCalSelectedDate(d => addDays(d, 1))}
+                className="p-2 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-500 flex-shrink-0"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+
+            {/* ── Time row ── */}
+            <div className="flex items-end gap-2">
+              {/* Hour */}
+              <div className="flex-1 space-y-1">
+                <label className="block text-[10px] font-medium text-gray-500 uppercase tracking-wide">Hour</label>
+                <select
+                  value={pickHour}
+                  onChange={e => setPickHour(e.target.value)}
+                  className={inputCls}
+                >
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map(h => (
+                    <option key={h} value={String(h)} disabled={isHourDisabled(h)}>
+                      {String(h).padStart(2, '0')}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <span className="pb-2.5 text-gray-400 font-bold text-sm">:</span>
+
+              {/* Minute */}
+              <div className="flex-1 space-y-1">
+                <label className="block text-[10px] font-medium text-gray-500 uppercase tracking-wide">Min</label>
+                <select
+                  value={pickMin}
+                  onChange={e => setPickMin(e.target.value)}
+                  className={inputCls}
+                >
+                  {Array.from({ length: 12 }, (_, i) => i * 5).map(m => {
+                    const mStr = String(m).padStart(2, '0')
+                    return (
+                      <option key={m} value={mStr} disabled={isMinDisabled(m)}>{mStr}</option>
+                    )
+                  })}
+                </select>
+              </div>
+
+              {/* AM / PM toggle */}
+              <div className="space-y-1">
+                <label className="block text-[10px] font-medium text-gray-500 uppercase tracking-wide">Period</label>
+                <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                  {(['AM', 'PM'] as const).map(p => {
+                    const dis = isAmPmDisabled(p)
                     return (
                       <button
-                        key={slot.slot_time}
+                        key={p}
                         type="button"
-                        disabled={!slot.is_available}
-                        onClick={() => setValue('slot_time', slot.slot_time)}
-                        className={`px-2 py-1.5 rounded text-xs font-medium border transition-colors ${
-                          !slot.is_available
-                            ? 'bg-gray-100 text-gray-300 border-gray-100 cursor-not-allowed'
-                            : isSelected
-                            ? 'bg-primary text-white border-primary'
-                            : 'bg-white text-gray-700 border-gray-200 hover:border-primary hover:text-primary'
+                        disabled={dis}
+                        onClick={() => !dis && setPickAmPm(p)}
+                        className={`px-3 py-2 text-xs font-medium transition-colors ${
+                          dis
+                            ? 'bg-gray-50 text-gray-300 cursor-not-allowed'
+                            : pickAmPm === p
+                              ? 'bg-primary text-white'
+                              : 'bg-white text-gray-600 hover:bg-gray-50'
                         }`}
-                      >
-                        {t}
-                      </button>
+                      >{p}</button>
                     )
                   })}
                 </div>
-              )}
-              {errors.slot_time && <p className="text-xs text-red-500">Select a slot</p>}
+              </div>
+
+              {/* Live preview */}
+              <div className="pb-2 text-sm font-semibold text-primary tabular-nums whitespace-nowrap">
+                {String(pickHour).padStart(2, '0')}:{pickMin} {pickAmPm}
+              </div>
             </div>
-          )}
+
+            {/* Summary */}
+            <p className="text-xs text-green-700 font-medium">
+              &#10003; {format(calSelectedDate, 'EEE, dd MMM yyyy')} &nbsp;&middot;&nbsp; {String(pickHour).padStart(2, '0')}:{pickMin} {pickAmPm}
+            </p>
+            {errors.slot_time && <p className="text-xs text-red-500">Select a date and time</p>}
+          </div>
 
           {/* Notes */}
           <div className="space-y-1">

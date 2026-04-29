@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_role
-from app.core.security import hash_password, generate_temp_password
+from app.core.security import hash_password
 from app.core.sms import send_doctor_credentials, send_staff_credentials
 from app.core.username import generate_username
 from app.db.engine import get_session
@@ -20,11 +20,11 @@ from app.models.public.user import Tenant, User
 router = APIRouter()
 
 # Roles that hospital_admin can create/manage (doctors go via /doctors/onboard)
-MANAGEABLE_ROLES = {"receptionist", "nurse", "billing_officer", "hospital_admin", "lab_technician", "pharmacist"}
+MANAGEABLE_ROLES = {"receptionist", "nurse", "billing_officer", "hospital_admin", "lab_technician", "pharmacist", "store_manager"}
 
 
 class UserCreate(BaseModel):
-    email: EmailStr
+    email: Optional[EmailStr] = None
     phone: str = Field(..., pattern=r"^\+?[1-9]\d{9,14}$")
     password: Optional[str] = Field(
         None,
@@ -36,6 +36,8 @@ class UserCreate(BaseModel):
     )
     full_name: str = Field(..., min_length=1, max_length=255)
     role: str
+    gender: Optional[str] = Field(None, pattern=r"^(male|female)$")
+    send_via: str = Field("whatsapp", pattern=r"^(sms|whatsapp)$")
 
     @field_validator("role")
     @classmethod
@@ -47,6 +49,13 @@ class UserCreate(BaseModel):
     @field_validator("username", mode="before")
     @classmethod
     def empty_str_to_none(cls, v: object) -> object:
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def empty_email_to_none(cls, v: object) -> object:
         if isinstance(v, str) and v.strip() == "":
             return None
         return v
@@ -117,10 +126,10 @@ async def create_user(
     if not tenant:
         raise HTTPException(status_code=400, detail="Tenant not found")
 
-    if (await session.execute(select(User).where(User.email == payload.email))).scalar_one_or_none():
+    if payload.email and (await session.execute(select(User).where(User.email == payload.email))).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="A user with this email already exists")
 
-    temp_password = payload.password or generate_temp_password()
+    temp_password = payload.password or "Password@123"
     username = payload.username or await generate_username(payload.full_name, session)
     if payload.username:
         if (await session.execute(select(User).where(User.username == username))).scalar_one_or_none():
@@ -140,12 +149,16 @@ async def create_user(
     session.add(new_user)
     await session.commit()
 
-    send_doctor_credentials(
+    send_staff_credentials(
         to_phone=payload.phone,
         full_name=payload.full_name,
         username=username,
         password=temp_password,
         hospital_name=tenant.hospital_name,
+        role=payload.role,
+        gender=payload.gender or "",
+        is_new=True,
+        send_via=payload.send_via,
     )
 
     result = _row_to_dict(new_user)
@@ -209,7 +222,7 @@ async def reset_user_password(
     if not user.phone:
         raise HTTPException(status_code=400, detail="User has no phone number — cannot send SMS")
 
-    new_password = generate_temp_password()
+    new_password = "Password@123"
     user.hashed_password = hash_password(new_password)
     await session.commit()
 
@@ -219,6 +232,8 @@ async def reset_user_password(
         username=user.username,
         password=new_password,
         hospital_name=tenant.hospital_name,
+        role=user.role,
+        is_new=False,
     )
 
     return {"detail": "Password reset. New credentials sent via SMS.", "phone": user.phone}

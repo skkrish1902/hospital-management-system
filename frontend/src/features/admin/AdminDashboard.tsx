@@ -6,6 +6,7 @@
  * Row 3: Department performance table (all-time)
  * Row 4: Today's OPD summary + Appointments breakdown
  */
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import apiClient from '@/services/apiClient'
 
@@ -37,6 +38,18 @@ interface AdminStats {
   invoices_draft: number
 }
 
+interface IndentStats {
+  period: string
+  since: string
+  total_indents: number
+  total_expenditure: number
+  fulfilled_count: number
+  fulfilled_amount: number
+  pending_count: number
+  approved_count: number
+  by_date: { date: string; amount: number }[]
+}
+
 const ROLE_LABELS: Record<string, string> = {
   receptionist: 'Receptionist',
   nurse: 'Nurse',
@@ -45,6 +58,7 @@ const ROLE_LABELS: Record<string, string> = {
   pharmacist: 'Pharmacist',
   billing_officer: 'Billing',
   hospital_admin: 'Admin',
+  store_manager: 'Store Manager',
   super_admin: 'Super Admin',
 }
 
@@ -86,9 +100,17 @@ function SkeletonCard({ h = 'h-32' }: { h?: string }) {
 }
 
 export default function AdminDashboard() {
+  const [indentPeriod, setIndentPeriod] = useState<'week' | 'month' | 'year'>('month')
+
   const { data: s, isLoading, dataUpdatedAt } = useQuery<AdminStats>({
     queryKey: ['admin-stats'],
     queryFn: () => apiClient.get('/admin/stats').then(r => r.data),
+    refetchInterval: 60_000,
+  })
+
+  const { data: indentStats } = useQuery<IndentStats>({
+    queryKey: ['indent-stats', indentPeriod],
+    queryFn: () => apiClient.get('/indents/stats', { params: { period: indentPeriod } }).then(r => r.data),
     refetchInterval: 60_000,
   })
 
@@ -412,6 +434,62 @@ export default function AdminDashboard() {
             </p>
           )}
         </div>
+      </div>
+
+      {/* Row 5: Indent Expenditure */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+            </svg>
+            <span className="text-sm font-semibold text-gray-700">Indent Expenditure</span>
+          </div>
+          <div className="flex gap-1.5">
+            {(['week', 'month', 'year'] as const).map(p => (
+              <button
+                key={p}
+                onClick={() => setIndentPeriod(p)}
+                className={`px-3 py-1 text-xs font-medium rounded-lg border transition-colors ${indentPeriod === p ? 'bg-orange-50 border-orange-400 text-orange-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+              >
+                {p.charAt(0).toUpperCase() + p.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {indentStats ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-orange-50 rounded-xl p-4">
+              <p className="text-xs font-semibold text-orange-600 uppercase tracking-wide">Total Indents</p>
+              <p className="text-2xl font-bold text-orange-800 mt-1">{indentStats.total_indents}</p>
+              <p className="text-xs text-orange-500 mt-0.5">since {indentStats.since}</p>
+            </div>
+            <div className="bg-red-50 rounded-xl p-4">
+              <p className="text-xs font-semibold text-red-600 uppercase tracking-wide">Total Expenditure</p>
+              <p className="text-2xl font-bold text-red-800 mt-1">
+                {fmtCurrency(indentStats.total_expenditure)}
+              </p>
+              <p className="text-xs text-red-500 mt-0.5">amount entered by admin</p>
+            </div>
+            <div className="bg-green-50 rounded-xl p-4">
+              <p className="text-xs font-semibold text-green-600 uppercase tracking-wide">Fulfilled</p>
+              <p className="text-2xl font-bold text-green-800 mt-1">{indentStats.fulfilled_count}</p>
+              <p className="text-xs text-green-500 mt-0.5">{fmtCurrency(indentStats.fulfilled_amount)} value</p>
+            </div>
+            <div className="bg-yellow-50 rounded-xl p-4">
+              <p className="text-xs font-semibold text-yellow-600 uppercase tracking-wide">Pending / Approved</p>
+              <p className="text-2xl font-bold text-yellow-800 mt-1">
+                {indentStats.pending_count + indentStats.approved_count}
+              </p>
+              <p className="text-xs text-yellow-500 mt-0.5">{indentStats.pending_count} pending · {indentStats.approved_count} approved</p>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[...Array(4)].map((_, i) => <div key={i} className="h-24 bg-gray-100 rounded-xl animate-pulse" />)}
+          </div>
+        )}
       </div>
     </div>
   )

@@ -70,6 +70,7 @@ class DoctorOnboard(BaseModel):
     consultation_fee: float = Field(default=0.0, ge=0)
     qualification: Optional[str] = Field(None, max_length=500)
     experience_years: Optional[int] = Field(None, ge=0, le=60)
+    send_via: str = Field("whatsapp", pattern=r"^(sms|whatsapp)$")
 
     @field_validator("username", mode="before")
     @classmethod

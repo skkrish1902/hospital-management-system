@@ -20,6 +20,7 @@ const MANAGEABLE_ROLES = [
   'lab_technician',
   'pharmacist',
   'hospital_admin',
+  'store_manager',
 ] as const
 
 const ROLE_LABELS: Record<string, string> = {
@@ -29,14 +30,18 @@ const ROLE_LABELS: Record<string, string> = {
   lab_technician: 'Lab Technician',
   pharmacist: 'Pharmacist',
   hospital_admin: 'Hospital Admin',
+  store_manager: 'Store Manager',
 }
 
 const createSchema = z.object({
-  email: z.string().email('Valid email required'),
+  full_name: z.string().min(1, 'Name required'),
+  role: z.enum(MANAGEABLE_ROLES, { required_error: 'Role required' }),
   phone: z
     .string()
     .length(10, 'Enter exactly 10 digits')
     .regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number'),
+  gender: z.enum(['male', 'female'], { required_error: 'Gender required' }),
+  email: z.string().email('Valid email required').optional().or(z.literal('')),
   username: z
     .string()
     .min(3, 'Min 3 characters')
@@ -44,8 +49,7 @@ const createSchema = z.object({
     .regex(/^[a-z0-9_]+$/, 'Lowercase letters, digits, underscores only')
     .optional()
     .or(z.literal('')),
-  full_name: z.string().min(1, 'Name required'),
-  role: z.enum(MANAGEABLE_ROLES, { required_error: 'Role required' }),
+  send_via: z.enum(['sms', 'whatsapp']).default('sms'),
 })
 type CreateForm = z.infer<typeof createSchema>
 
@@ -220,7 +224,7 @@ export default function UsersAdminPage() {
     },
   })
 
-  const createForm = useForm<CreateForm>({ resolver: zodResolver(createSchema) })
+  const createForm = useForm<CreateForm>({ resolver: zodResolver(createSchema), defaultValues: { send_via: 'whatsapp' } })
   const editForm = useForm<EditForm>({ resolver: zodResolver(editSchema) })
 
   const openEdit = (user: StaffUser) => {
@@ -229,7 +233,7 @@ export default function UsersAdminPage() {
   }
 
   const onCreateSubmit = (data: CreateForm) => {
-    createMut.mutate({ ...data, phone: `+91${data.phone}` })
+    createMut.mutate({ ...data, phone: `+91${data.phone}`, gender: data.gender, send_via: data.send_via, email: data.email || undefined })
   }
 
   const toggleActive = (user: StaffUser) =>
@@ -451,15 +455,6 @@ export default function UsersAdminPage() {
               </FormField>
             </div>
 
-            <FormField label="Email" error={createForm.formState.errors.email?.message}>
-              <input
-                {...createForm.register('email')}
-                type="email"
-                className={inputCls}
-                placeholder="priya@hospital.com"
-              />
-            </FormField>
-
             <div className="grid grid-cols-2 gap-4">
               <FormField label="Phone" error={createForm.formState.errors.phone?.message}>
                 <div className="flex">
@@ -476,7 +471,23 @@ export default function UsersAdminPage() {
                   />
                 </div>
               </FormField>
+              <FormField label="Gender" error={createForm.formState.errors.gender?.message}>
+                <select {...createForm.register('gender')} className={inputCls}>
+                  <option value="">Select gender…</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                </select>
+              </FormField>
             </div>
+
+              <FormField label="Email (optional)" error={createForm.formState.errors.email?.message}>
+              <input
+                {...createForm.register('email')}
+                type="email"
+                className={inputCls}
+                placeholder="priya@hospital.com"
+              />
+            </FormField>
 
             <FormField
               label="Username (optional — auto-generated if left blank)"
@@ -488,6 +499,23 @@ export default function UsersAdminPage() {
                 placeholder="e.g. priya_sharma"
               />
             </FormField>
+
+            <div>
+              <p className="block text-sm font-medium text-gray-700 mb-1">Send credentials via</p>
+              <div className="flex gap-4">
+                {(['sms', 'whatsapp'] as const).map(option => (
+                  <label key={option} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      value={option}
+                      {...createForm.register('send_via')}
+                      className="accent-primary"
+                    />
+                    <span className="text-sm text-gray-700">{option === 'sms' ? 'SMS' : 'WhatsApp'}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
 
             {createMut.isError && (
               <p className="text-xs text-red-500">

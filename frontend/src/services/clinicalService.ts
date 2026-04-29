@@ -5,6 +5,7 @@ export interface MedicineItemCreate {
   name: string
   dose: string
   frequency: string
+  food_instruction?: string
   duration: string
   route: string
   notes?: string
@@ -53,6 +54,9 @@ export const billingService = {
 
   admitPatient: (invoiceId: string) =>
     apiClient.post<Invoice>(`/billing/${invoiceId}/admit-patient`).then(r => r.data),
+
+  publicConfig: () =>
+    apiClient.get<{ razorpay_key_id: string }>('/billing/public-config').then(r => r.data),
 }
 
 export const doctorService = {
@@ -83,6 +87,7 @@ export const doctorService = {
     consultation_fee?: number
     qualification?: string
     experience_years?: number
+    send_via?: string
   }) => apiClient.post<Doctor & { temp_password: string }>('/doctors/onboard', data).then(r => r.data),
 
   update: (id: string, data: Partial<{
@@ -102,11 +107,13 @@ export const userService = {
     apiClient.get<import('@/types/common').StaffUser[]>('/users', { params }).then(r => r.data),
 
   create: (data: {
-    email: string
+    email?: string
     phone: string
     username?: string
     full_name: string
     role: string
+    gender: string
+    send_via: string
   }) => apiClient.post<import('@/types/common').StaffUser & { temp_password: string }>('/users', data).then(r => r.data),
 
   update: (id: string, data: { full_name?: string; is_active?: boolean }) =>

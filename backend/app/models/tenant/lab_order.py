@@ -14,7 +14,7 @@ class LabOrder(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     visit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("visits.id"), nullable=False, index=True)
-    uhid: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
+    uhid: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     # e.g. [{"test": "CBC", "notes": "fasting required"}]
     tests: Mapped[Optional[list]] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="ordered")
@@ -29,7 +29,7 @@ class LabResult(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     lab_order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("lab_orders.id"), nullable=False, index=True)
-    uhid: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
+    uhid: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     results: Mapped[Optional[dict]] = mapped_column(JSONB)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     critical_flags: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)

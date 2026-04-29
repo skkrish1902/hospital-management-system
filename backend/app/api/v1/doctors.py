@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_role
-from app.core.security import hash_password, generate_temp_password
+from app.core.security import hash_password
 from app.core.sms import send_doctor_credentials
 from app.core.username import generate_username
 from app.db.engine import get_session
@@ -83,7 +83,7 @@ async def onboard_doctor(
         raise HTTPException(status_code=400, detail="Tenant not found")
 
     # Auto-generate password if not provided
-    temp_password = payload.password or generate_temp_password()
+    temp_password = payload.password or "Password@123"
 
     # Check if a user with this email already exists
     existing_user = (await session.execute(
@@ -154,6 +154,7 @@ async def onboard_doctor(
         username=new_user.username,
         password=temp_password,
         hospital_name=tenant.hospital_name if tenant else tenant_schema,
+        send_via=payload.send_via,
     )
 
     enriched.temp_password = temp_password

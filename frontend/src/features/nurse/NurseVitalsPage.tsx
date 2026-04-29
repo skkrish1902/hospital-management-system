@@ -10,7 +10,7 @@
 import { useState, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { visitService, vitalsService, consultationService, type VitalsCreate } from '@/services/visitService'
@@ -167,9 +167,25 @@ export default function NurseVitalsPage() {
   useWebSocket('queue:update', onUpdate)
   useWebSocket('pharmacy:update', onUpdate)
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<VitalsForm>({
+  const { register, handleSubmit, reset, control, formState: { errors } } = useForm<VitalsForm>({
     resolver: zodResolver(vitalsSchema),
   })
+
+  // Live BMI computation
+  const watchWeight = useWatch({ control, name: 'weight' })
+  const watchHeight = useWatch({ control, name: 'height' })
+  const liveBmi = (() => {
+    const w = Number(watchWeight)
+    const h = Number(watchHeight)
+    if (!w || !h || h <= 0) return null
+    return Math.round((w / Math.pow(h / 100, 2)) * 10) / 10
+  })()
+  const bmiCategory = (bmi: number) => {
+    if (bmi < 18.5) return { label: 'Underweight', cls: 'bg-blue-100 text-blue-700 border-blue-200' }
+    if (bmi < 25)   return { label: 'Normal',      cls: 'bg-green-100 text-green-700 border-green-200' }
+    if (bmi < 30)   return { label: 'Overweight',  cls: 'bg-yellow-100 text-yellow-700 border-yellow-200' }
+    return              { label: 'Obese',          cls: 'bg-red-100 text-red-700 border-red-200' }
+  }
 
   // Save vitals → automatically sends patient to doctor queue (vitals_done)
   const { mutate: submitVitals, isPending, error: vitalsError } = useMutation({
@@ -336,12 +352,27 @@ export default function NurseVitalsPage() {
                           <input {...register('pulse')} type="number" placeholder="72" className={inputCls(false)} />
                         </VitalField>
                         <VitalField label="Weight (kg)" error={errors.weight?.message}>
-                          <input {...register('weight')} type="number" step="0.1" placeholder="70" className={inputCls(false)} />
+                          <input {...register('weight')} type="number" step="0.1" placeholder="70" className={inputCls(!!errors.weight)} />
                         </VitalField>
                       </div>
-                      <VitalField label="Height (cm)" error={errors.height?.message}>
-                        <input {...register('height')} type="number" step="0.1" placeholder="170" className={inputCls(false)} />
-                      </VitalField>
+                      <div className="grid grid-cols-2 gap-3">
+                        <VitalField label="Height (cm)" error={errors.height?.message}>
+                          <input {...register('height')} type="number" step="0.1" placeholder="170" className={inputCls(!!errors.height)} />
+                        </VitalField>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">BMI (auto-calculated)</label>
+                          {liveBmi !== null ? (
+                            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-semibold ${bmiCategory(liveBmi).cls}`}>
+                              <span className="text-base">{liveBmi}</span>
+                              <span className="text-xs font-medium">{bmiCategory(liveBmi).label}</span>
+                            </div>
+                          ) : (
+                            <div className="px-3 py-2 rounded-lg border border-dashed border-gray-300 text-xs text-gray-400">
+                              Enter weight &amp; height
+                            </div>
+                          )}
+                        </div>
+                      </div>
                       <div className="flex gap-3 pt-1">
                         <button type="button" onClick={() => { setSelectedVisit(null); reset() }}
                           className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg text-sm font-medium hover:bg-white">

@@ -24,6 +24,7 @@ _ALLOWED_CHANNELS = {
     "pharmacy:update",
     "lab:update",
     "pos:payment",    # POS kiosk screen — payment request/success events
+    "indent:update",  # Indent status / items / amount changes
 }
 
 # Channels accessible without a JWT (public display boards / kiosks)

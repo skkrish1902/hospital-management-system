@@ -31,6 +31,8 @@ from app.schemas.appointment import (
     SlotInfo,
 )
 from app.core.razorpay_service import create_razorpay_order
+from app.core.sms import send_appointment_confirmation
+from app.models.public.user import Tenant
 from app.websocket.manager import ws_manager
 
 router = APIRouter(dependencies=[Depends(require_feature("appointments"))])
@@ -165,11 +167,12 @@ async def book_appointment(
         patient_id=payload.patient_id,
         uhid=patient.uhid,
         doctor_id=payload.doctor_id,
+        department_id=doctor.department_id if doctor else None,
         slot_time=payload.slot_time,
         type=payload.type,
         notes=payload.notes,
         status="scheduled",
-        booked_by_user_id=current_user.get("user_id"),
+        booked_by_user_id=current_user.get("sub"),
     )
     session.add(appt)
     await session.commit()
@@ -181,6 +184,21 @@ async def book_appointment(
         "appointment_id": str(appt.id),
         "slot_time": appt.slot_time.isoformat(),
     })
+
+    # ── WhatsApp confirmation ─────────────────────────────────────────────
+    tenant_row = (await session.execute(
+        select(Tenant).where(Tenant.schema_name == tenant)
+    )).scalar_one_or_none()
+    hospital_name = tenant_row.hospital_name if tenant_row else tenant
+    send_appointment_confirmation(
+        to_phone=patient.phone,
+        patient_name=f"{patient.first_name} {patient.last_name}",
+        uhid=patient.uhid,
+        slot_time_utc=appt.slot_time,
+        doctor_name=doctor.full_name if doctor else None,
+        appt_type=appt.type,
+        hospital_name=hospital_name,
+    )
 
     return await _enrich(appt, session)
 

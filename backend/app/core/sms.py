@@ -27,7 +27,7 @@ def _twilio_send_sms(*, to: str, body: str) -> None:
     Client(sid, token).messages.create(body=body, from_=from_number, to=to)
 
 
-def _twilio_send_whatsapp(*, to: str, body: str) -> None:
+def _twilio_send_whatsapp(*, to: str, body: str, media_url: str | None = None) -> None:
     """Send a WhatsApp message via Twilio. Falls back to SMS if no WhatsApp from-number. Raises on error."""
     sid = settings.TWILIO_ACCOUNT_SID
     token = settings.TWILIO_AUTH_TOKEN
@@ -41,9 +41,12 @@ def _twilio_send_whatsapp(*, to: str, body: str) -> None:
     client = Client(sid, token)
 
     if whatsapp_from:
-        client.messages.create(from_=whatsapp_from, body=body, to=f"whatsapp:{to}")
+        kwargs: dict = dict(from_=whatsapp_from, body=body, to=f"whatsapp:{to}")
+        if media_url:
+            kwargs["media_url"] = [media_url]
+        client.messages.create(**kwargs)
     else:
-        # Fallback: plain SMS
+        # Fallback: plain SMS (no media)
         _twilio_send_sms(to=to, body=body)
 
 
@@ -66,9 +69,10 @@ def send_doctor_credentials(
     username: str,
     password: str,
     hospital_name: str = "your hospital",
+    send_via: str = "sms",
 ) -> None:
     """
-    Send an SMS to a newly onboarded doctor with their login credentials.
+    Send credentials to a newly onboarded doctor via SMS or WhatsApp.
     Never raises — errors are logged and swallowed.
     """
     normalised = _normalise_phone(to_phone)
@@ -81,10 +85,13 @@ def send_doctor_credentials(
         f"— Admin Team"
     )
     try:
-        _twilio_send_sms(to=normalised, body=body)
-        logger.info("Credentials SMS sent to %s", normalised)
+        if send_via == "whatsapp":
+            _twilio_send_whatsapp(to=normalised, body=body)
+        else:
+            _twilio_send_sms(to=normalised, body=body)
+        logger.info("Credentials sent via %s to %s", send_via, normalised)
     except Exception:
-        logger.exception("Failed to send credentials SMS to %s", normalised)
+        logger.exception("Failed to send credentials to %s", normalised)
 
 
 def send_staff_credentials(
@@ -94,25 +101,40 @@ def send_staff_credentials(
     username: str,
     password: str,
     hospital_name: str = "your hospital",
+    role: str = "",
+    gender: str = "",
+    is_new: bool = True,
+    send_via: str = "sms",
 ) -> None:
     """
-    Send an SMS to a staff member with their (new) login credentials.
+    Send credentials to a staff member via SMS or WhatsApp.
+    Uses Dr. for doctors, Ms. for female staff, Mr. for male staff.
     Never raises — errors are logged and swallowed.
     """
+    if role == "doctor":
+        salutation = "Dr."
+    elif gender.lower() == "female":
+        salutation = "Ms."
+    else:
+        salutation = "Mr."
+    action = "created" if is_new else "reset"
     normalised = _normalise_phone(to_phone)
     body = (
-        f"Hello {full_name},\n\n"
-        f"Your login credentials for {hospital_name} have been reset:\n"
+        f"Hello {salutation} {full_name},\n\n"
+        f"Your login credentials for {hospital_name} have been {action}:\n"
         f"  Username : {username}\n"
         f"  Password : {password}\n\n"
         f"Please change your password after logging in.\n"
         f"— Admin Team"
     )
     try:
-        _twilio_send_sms(to=normalised, body=body)
-        logger.info("Password reset SMS sent to %s", normalised)
+        if send_via == "whatsapp":
+            _twilio_send_whatsapp(to=normalised, body=body)
+        else:
+            _twilio_send_sms(to=normalised, body=body)
+        logger.info("Credentials sent via %s to %s", send_via, normalised)
     except Exception:
-        logger.exception("Failed to send password reset SMS to %s", normalised)
+        logger.exception("Failed to send credentials to %s", normalised)
 
 
 def send_patient_welcome(
@@ -139,3 +161,77 @@ def send_patient_welcome(
         logger.info("Welcome message sent to patient %s (%s)", uhid, normalised)
     except Exception:
         logger.exception("Failed to send welcome message to %s", normalised)
+
+
+def send_appointment_confirmation(
+    *,
+    to_phone: str,
+    patient_name: str,
+    uhid: str,
+    slot_time_utc,
+    doctor_name: str | None = None,
+    appt_type: str = "walkin",
+    hospital_name: str = "our hospital",
+) -> None:
+    """
+    Send an appointment confirmation via WhatsApp immediately after booking.
+    Never raises — errors are logged and swallowed.
+    """
+    import datetime
+    _IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    slot_ist = slot_time_utc.astimezone(_IST)
+    date_str = slot_ist.strftime("%A, %d %B %Y")   # e.g. Friday, 24 April 2026
+    time_str = slot_ist.strftime("%I:%M %p IST").lstrip("0")  # e.g. 1:15 PM IST
+
+    type_labels = {"walkin": "Walk-in", "phone": "Phone", "online": "Online"}
+    type_label = type_labels.get(appt_type, appt_type.capitalize())
+
+    doc_line = f"  Doctor      : Dr. {doctor_name}\n" if doctor_name else ""
+    body = (
+        f"Dear {patient_name},\n\n"
+        f"\u2705 Your appointment has been confirmed at {hospital_name}.\n\n"
+        f"\U0001f4cb Appointment Details:\n"
+        f"  UHID        : {uhid}\n"
+        f"  Date        : {date_str}\n"
+        f"  Time        : {time_str}\n"
+        f"{doc_line}"
+        f"  Type        : {type_label}\n\n"
+        f"Please arrive 10 minutes before your scheduled time.\n"
+        f"\u2014 {hospital_name}"
+    )
+    normalised = _normalise_phone(to_phone)
+    try:
+        _twilio_send_whatsapp(to=normalised, body=body)
+        logger.info("Appointment confirmation sent to %s (%s)", uhid, normalised)
+    except Exception:
+        logger.exception("Failed to send appointment confirmation to %s", normalised)
+
+
+def send_prescription_whatsapp(
+    *,
+    to_phone: str,
+    patient_name: str,
+    uhid: str,
+    hospital_name: str,
+    doctor_name: str | None,
+    pdf_url: str,
+) -> None:
+    """
+    Send prescription PDF via WhatsApp to the patient after pharmacy dispense.
+    Never raises — errors are logged and swallowed.
+    """
+    normalised = _normalise_phone(to_phone)
+    doc_line = f"Consulting Doctor: Dr. {doctor_name}\n" if doctor_name else ""
+    body = (
+        f"Dear {patient_name},\n\n"
+        f"Your prescription from {hospital_name} is ready.\n"
+        f"{doc_line}"
+        f"UHID: {uhid}\n\n"
+        f"Please find your prescription (medicines, lab tests & doctor's notes) in the attached PDF.\n\n"
+        f"Get well soon!\n— {hospital_name}"
+    )
+    try:
+        _twilio_send_whatsapp(to=normalised, body=body, media_url=pdf_url)
+        logger.info("Prescription PDF sent via WhatsApp to %s (%s)", uhid, normalised)
+    except Exception:
+        logger.exception("Failed to send prescription WhatsApp to %s", normalised)

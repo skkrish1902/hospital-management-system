@@ -14,6 +14,7 @@ class VitalsCreate(BaseModel):
     height: Optional[float] = None        # cm
     spo2: Optional[int] = None            # %
     pulse: Optional[int] = None           # bpm
+    # bmi is computed server-side — not accepted from client
 
 
 class VitalsRead(BaseModel):
@@ -26,6 +27,7 @@ class VitalsRead(BaseModel):
     height: Optional[float] = None
     spo2: Optional[int] = None
     pulse: Optional[int] = None
+    bmi: Optional[float] = None
     recorded_by_user_id: uuid.UUID
     recorded_at: datetime
 

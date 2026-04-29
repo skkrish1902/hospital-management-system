@@ -13,7 +13,7 @@ class PharmacyQueue(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     prescription_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("prescriptions.id"), nullable=False, index=True)
-    uhid: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
+    uhid: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     # status: pending | preparing | ready | partial | dispensed
     notes: Mapped[Optional[str]] = mapped_column(Text)

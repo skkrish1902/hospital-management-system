@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,10 +14,21 @@ from app.websocket.manager import ws_manager
 from app.websocket.redis_bridge import start_redis_subscriber
 from app.api.v1.router import api_router
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    logger.info("=" * 80)
+    logger.info("🚀 HOSPITAL API STARTING UP")
+    logger.info("=" * 80)
+    logger.info("Environment: %s", settings.ENVIRONMENT)
+    logger.info("Debug: %s", settings.DEBUG)
+    logger.info("RAZORPAY_KEY_ID: %s", settings.RAZORPAY_KEY_ID[:20] + "..." if settings.RAZORPAY_KEY_ID else "❌ NOT SET")
+    logger.info("RAZORPAY_WEBHOOK_SECRET: %s", "✓ SET" if settings.RAZORPAY_WEBHOOK_SECRET else "❌ NOT SET")
+    logger.info("=" * 80)
+    
     await init_db()
     await start_redis_subscriber(ws_manager)
     yield
@@ -63,3 +75,12 @@ app.mount("/uploads", StaticFiles(directory=str(_uploads_dir)), name="uploads")
 @app.get("/health", tags=["health"])
 async def health_check():
     return {"status": "ok", "service": "hospital-opd-api"}
+
+
+@app.get("/api/v1/billing/config", tags=["billing"])
+async def get_billing_config():
+    """Returns billing configuration including Razorpay key (needed by frontend)."""
+    return {
+        "razorpay_key_id": settings.RAZORPAY_KEY_ID,
+        "razorpay_configured": bool(settings.RAZORPAY_KEY_ID),
+    }

@@ -14,7 +14,7 @@ class Invoice(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     visit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("visits.id"), nullable=False, index=True)
-    uhid: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
+    uhid: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     # e.g. [{"description": "Consultation", "amount": 500.00}, {"description": "CBC Test", "amount": 300.00}]
     line_items: Mapped[Optional[list]] = mapped_column(JSONB)
     subtotal: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False, default=0.0)
@@ -28,3 +28,6 @@ class Invoice(Base, TimestampMixin):
     paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     razorpay_order_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     razorpay_payment_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    # pharmacy billing fields
+    source: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="consultation")
+    pharmacy_queue_id: Mapped[Optional[uuid.UUID]] = mapped_column(nullable=True)

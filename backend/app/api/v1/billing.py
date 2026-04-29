@@ -12,10 +12,12 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_role, require_feature
+from app.core.config import settings
 from app.core.razorpay_service import create_razorpay_order, fetch_order_payments, verify_webhook_signature
 from app.db.engine import AsyncSessionLocal, get_session, tenant_schema_var
 from app.models.tenant.invoice import Invoice
 from app.models.tenant.patient import Patient
+from app.models.tenant.pharmacy_queue import PharmacyQueue
 from app.models.tenant.visit import Visit
 from app.schemas.invoice import InvoiceCreate, InvoicePayment, InvoiceRead
 from app.websocket.manager import ws_manager
@@ -28,6 +30,14 @@ router = APIRouter(dependencies=[Depends(require_feature("billing"))])
 # Public router — Razorpay webhook must be reachable without JWT
 # (Razorpay's servers call this directly; auth is via HMAC signature)
 webhook_router = APIRouter()
+
+
+@router.get("/public-config")
+async def public_billing_config(
+    _: dict = Depends(require_role("pharmacist", "receptionist", "billing_officer", "nurse", "hospital_admin", "super_admin")),
+):
+    """Returns public Razorpay key ID so the frontend can open checkout."""
+    return {"razorpay_key_id": settings.RAZORPAY_KEY_ID}
 
 
 @router.get("", response_model=List[InvoiceRead])
@@ -229,17 +239,39 @@ async def resend_pos_request(
     patient = await session.get(Patient, visit.patient_id) if visit else None
 
     tenant = current_user.get("tenant_schema", "public")
-    await ws_manager.broadcast(tenant, "pos:payment", {
+    
+    # Validate Razorpay is configured
+    if not settings.RAZORPAY_KEY_ID:
+        logger.error("❌ Razorpay payment requested but RAZORPAY_KEY_ID not configured in environment!")
+        raise HTTPException(
+            status_code=500,
+            detail="Razorpay payment gateway is not configured. Contact administrator."
+        )
+    
+    broadcast_payload = {
         "event": "payment_request",
-        "razorpay_key_id": __import__("app.core.config", fromlist=["settings"]).settings.RAZORPAY_KEY_ID,
+        "razorpay_key_id": settings.RAZORPAY_KEY_ID,
         "razorpay_order_id": invoice.razorpay_order_id,
         "invoice_id": str(invoice.id),
         "amount": int(float(invoice.total) * 100),
-        "amount_display": f"\u20b9{float(invoice.total):.0f}",
+        "amount_display": f"₹{float(invoice.total):.0f}",
         "patient_name": f"{patient.first_name} {patient.last_name}" if patient else "Patient",
         "uhid": invoice.uhid or "",
         "description": invoice.line_items[0]["description"] if invoice.line_items else "Consultation Fee",
-    })
+    }
+    
+    logger.info(
+        "Broadcasting to pos:payment - Payload: %s",
+        json.dumps({
+            "event": broadcast_payload.get("event"),
+            "razorpay_key_id": broadcast_payload.get("razorpay_key_id"),
+            "razorpay_order_id": broadcast_payload.get("razorpay_order_id"),
+            "invoice_id": broadcast_payload.get("invoice_id"),
+            "tenant": tenant,
+        })
+    )
+    
+    await ws_manager.broadcast(tenant, "pos:payment", broadcast_payload)
     logger.info("POS payment request re-sent: invoice=%s", invoice_id)
     return invoice
 
@@ -298,6 +330,8 @@ async def razorpay_webhook(request: Request):
     """
     body = await request.body()
     signature = request.headers.get("X-Razorpay-Signature", "")
+    
+    logger.info("Webhook: Received Razorpay webhook. Signature header present: %s", bool(signature))
 
     if not verify_webhook_signature(body, signature):
         logger.warning("Razorpay webhook: invalid signature")
@@ -305,11 +339,14 @@ async def razorpay_webhook(request: Request):
 
     try:
         event_data = json.loads(body)
+        logger.info("Webhook: Parsed event: %s", event_data.get("event"))
     except json.JSONDecodeError:
+        logger.error("Webhook: Failed to parse JSON")
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
     # Handle both captured (live/auto-capture) and authorized (test mode default)
     if event_data.get("event") not in ("payment.captured", "payment.authorized"):
+        logger.info("Webhook: Ignoring event type: %s", event_data.get("event"))
         return {"status": "ignored"}
 
     payment_entity = event_data.get("payload", {}).get("payment", {}).get("entity", {})
@@ -318,6 +355,11 @@ async def razorpay_webhook(request: Request):
     payment_method = payment_entity.get("method")  # upi / card / netbanking
     notes = payment_entity.get("notes") or {}
     tenant_schema = notes.get("tenant_schema", "")
+    
+    logger.info(
+        "Webhook: Extracted data: order_id=%s, payment_id=%s, tenant=%s, method=%s",
+        order_id, payment_id, tenant_schema, payment_method,
+    )
 
     if not order_id or not tenant_schema or not tenant_schema.replace("_", "").isalnum():
         logger.warning(
@@ -332,17 +374,44 @@ async def razorpay_webhook(request: Request):
         async with AsyncSessionLocal() as session:
             await session.execute(text(f'SET search_path TO "{tenant_schema}", public'))
 
+            logger.info(
+                "Webhook: Looking for invoice with order_id=%s in tenant=%s",
+                order_id, tenant_schema,
+            )
+
             invoice = (await session.execute(
                 select(Invoice).where(Invoice.razorpay_order_id == order_id)
             )).scalar_one_or_none()
 
-            if not invoice or invoice.status == "paid":
-                return {"status": "ok"}  # already processed or not found
+            if not invoice:
+                logger.error(
+                    "Webhook: Invoice not found for order_id=%s tenant=%s. Cannot process payment.",
+                    order_id, tenant_schema,
+                )
+                return {"status": "ok"}
+            
+            if invoice.status == "paid":
+                logger.info(
+                    "Webhook: Invoice %s already paid. Skipping duplicate.",
+                    invoice.id,
+                )
+                return {"status": "ok"}
 
+            logger.info(
+                "Webhook: Processing payment for invoice %s (source=%s, pharmacy_queue=%s)",
+                invoice.id, invoice.source, invoice.pharmacy_queue_id,
+            )
+
+            # Update invoice payment fields
             invoice.razorpay_payment_id = payment_id
             invoice.payment_method = payment_method
             invoice.status = "paid"
             invoice.paid_at = datetime.now(timezone.utc)
+            
+            logger.info(
+                "Webhook: Set invoice fields — razorpay_payment_id=%s, payment_method=%s, status=paid, paid_at=%s",
+                payment_id, payment_method, invoice.paid_at,
+            )
 
             visit = await session.get(Visit, invoice.visit_id)
             if visit and visit.status == "pre_billing":
@@ -351,24 +420,82 @@ async def razorpay_webhook(request: Request):
                 visit.status = "closed"
                 visit.closed_at = datetime.now(timezone.utc)
 
+            # If this was a pharmacy dispense invoice, advance the queue
+            if invoice.source == "pharmacy" and invoice.pharmacy_queue_id:
+                pq = await session.get(PharmacyQueue, invoice.pharmacy_queue_id)
+                if pq and pq.status != "dispensed":
+                    pq.status = "dispensed"
+                    logger.info(
+                        "Webhook: Marked pharmacy queue %s as dispensed",
+                        invoice.pharmacy_queue_id,
+                    )
+                    if visit and visit.status == "dispatched_pharmacy":
+                        visit.status = "billing_pending"
+
             await session.commit()
+            logger.info(
+                "Webhook: Committed invoice payment",
+            )
+            
+            # Verify the update was committed by re-querying from database
+            refreshed_invoice = (await session.execute(
+                select(Invoice).where(Invoice.id == invoice.id)
+            )).scalar_one_or_none()
+            
+            if refreshed_invoice:
+                logger.info(
+                    "Webhook: Verified invoice in DB — status=%s, payment_method=%s, paid_at=%s, razorpay_payment_id=%s",
+                    refreshed_invoice.status, refreshed_invoice.payment_method, refreshed_invoice.paid_at, refreshed_invoice.razorpay_payment_id,
+                )
+            else:
+                logger.error("Webhook: Invoice disappeared from DB after commit! id=%s", invoice.id)
 
         # Notify POS screen of payment success
-        await ws_manager.broadcast(tenant_schema, "pos:payment", {
-            "event": "payment_success",
-            "razorpay_order_id": order_id,
-            "razorpay_payment_id": payment_id,
-            "payment_method": payment_method,
-        })
+        try:
+            await ws_manager.broadcast(tenant_schema, "pos:payment", {
+                "event": "payment_success",
+                "razorpay_order_id": order_id,
+                "razorpay_payment_id": payment_id,
+                "payment_method": payment_method,
+            })
+            logger.info("Webhook: Broadcasted payment_success to pos:payment")
+        except Exception as e:
+            logger.error("Webhook: Failed to broadcast pos:payment: %s", e)
+        
         # Notify queue listeners (visit moved to registered)
-        await ws_manager.broadcast(tenant_schema, "queue:update", {
-            "event": "visit_registered",
-        })
+        try:
+            await ws_manager.broadcast(tenant_schema, "queue:update", {
+                "event": "visit_registered",
+            })
+            logger.info("Webhook: Broadcasted visit_registered to queue:update")
+        except Exception as e:
+            logger.error("Webhook: Failed to broadcast queue:update: %s", e)
+        
+        # Notify pharmacy page if it was a pharmacy dispense payment
+        if invoice.source == "pharmacy":
+            try:
+                await ws_manager.broadcast(tenant_schema, "pharmacy:update", {
+                    "event": "pharmacy_online_paid",
+                    "razorpay_order_id": order_id,
+                })
+                logger.info(
+                    "Webhook: Pharmacy payment success broadcast: order=%s payment=%s tenant=%s",
+                    order_id, payment_id, tenant_schema,
+                )
+            except Exception as e:
+                logger.error("Webhook: Failed to broadcast pharmacy:update: %s", e)
 
         logger.info(
-            "Razorpay payment captured: order=%s payment=%s tenant=%s",
-            order_id, payment_id, tenant_schema,
+            "Webhook: Razorpay payment captured: order=%s payment=%s tenant=%s source=%s",
+            order_id, payment_id, tenant_schema, invoice.source,
         )
+    except Exception as e:
+        logger.error(
+            "Webhook: Unexpected error processing order_id=%s tenant=%s: %s",
+            order_id, tenant_schema, e, exc_info=True,
+        )
+        # Still acknowledge to Razorpay so it stops retrying
+        return {"status": "ok"}
     finally:
         tenant_schema_var.reset(ctx_token)
 

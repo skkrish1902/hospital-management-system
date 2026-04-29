@@ -114,13 +114,25 @@ export default function PosScreen() {
 
   // ── Message handler ───────────────────────────────────────────────────────
   async function handleMessage(msg: Record<string, unknown>) {
+    console.log('[PosScreen] Message received:', msg)
+    
     if (msg.event === 'payment_request') {
       const req = msg as unknown as PaymentRequest & { event: string }
+      console.log('[PosScreen] Payment request - key:', req.razorpay_key_id, 'order:', req.razorpay_order_id)
+      
+      if (!req.razorpay_key_id) {
+        console.error('[PosScreen] ❌ razorpay_key_id is missing or undefined!')
+      }
+      if (!req.razorpay_order_id) {
+        console.error('[PosScreen] ❌ razorpay_order_id is missing or undefined!')
+      }
+      
       setPaymentReq(req)
       setPosState('payment_pending')
       await openRazorpayCheckout(req)
     } else if (msg.event === 'payment_success') {
       const info = msg as unknown as PaymentSuccess & { event: string }
+      console.log('[PosScreen] Payment success:', info)
       setSuccessInfo(info)
       setPosState('payment_success')
     }
@@ -128,13 +140,18 @@ export default function PosScreen() {
 
   // ── Razorpay checkout ─────────────────────────────────────────────────────
   async function openRazorpayCheckout(req: PaymentRequest) {
+    console.log('[PosScreen] openRazorpayCheckout() called with:', req)
+    
     const loaded = await loadRazorpayScript()
     if (!loaded || !window.Razorpay) {
       console.error('Razorpay checkout.js failed to load')
       return
     }
     if (!req.razorpay_key_id || !req.razorpay_order_id) {
-      // Razorpay not configured — show manual payment reminder
+      console.warn('[PosScreen] ⚠️  Razorpay not properly configured. key_id:', req.razorpay_key_id, 'order_id:', req.razorpay_order_id)
+      console.error('[PosScreen] ❌ Cannot proceed with payment. Missing key_id or order_id')
+      // Show error and return to idle
+      setPosState('idle')
       return
     }
 
@@ -163,7 +180,9 @@ export default function PosScreen() {
       },
     }
 
+    console.log('[PosScreen] Creating Razorpay with options:', options)
     const rzp = new window.Razorpay(options)
+    console.log('[PosScreen] Razorpay initialized, opening modal...')
     rzp.open()
   }
 

@@ -48,58 +48,71 @@ async def init_db() -> None:
     """Called at application startup; applies lightweight schema migrations."""
     async with engine.begin() as conn:
         await conn.execute(text("SELECT 1"))
-        # Add username column if it doesn't exist yet (idempotent migration)
-        await conn.execute(text("""
-            DO $$ BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = 'public'
-                      AND table_name   = 'users'
-                      AND column_name  = 'username'
-                ) THEN
-                    ALTER TABLE public.users ADD COLUMN username VARCHAR(50);
-                    -- Back-fill existing rows with a unique placeholder derived from email
-                    UPDATE public.users
-                       SET username = LOWER(SPLIT_PART(email, '@', 1))
-                                   || LPAD(CAST(EXTRACT(EPOCH FROM NOW())::BIGINT % 10000 AS TEXT), 4, '0')
-                     WHERE username IS NULL;
-                    ALTER TABLE public.users ALTER COLUMN username SET NOT NULL;
-                    CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON public.users (username);
-                END IF;
-            END $$;
+        
+        # Check if users table exists first
+        table_exists = await conn.execute(text("""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'users'
+            );
         """))
-        # Add phone column if it doesn't exist yet (idempotent migration)
-        await conn.execute(text("""
-            DO $$ BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = 'public'
-                      AND table_name   = 'users'
-                      AND column_name  = 'phone'
-                ) THEN
-                    ALTER TABLE public.users ADD COLUMN phone VARCHAR(20);
-                END IF;
-            END $$;
-        """))
-        # Add tenant_name column if it doesn't exist yet (idempotent migration)
-        await conn.execute(text("""
-            DO $$ BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = 'public'
-                      AND table_name   = 'users'
-                      AND column_name  = 'tenant_name'
-                ) THEN
-                    ALTER TABLE public.users ADD COLUMN tenant_name VARCHAR(63);
-                    -- Back-fill from the tenants table
-                    UPDATE public.users u
-                       SET tenant_name = t.schema_name
-                      FROM public.tenants t
-                     WHERE t.id = u.tenant_id;
-                    ALTER TABLE public.users ALTER COLUMN tenant_name SET NOT NULL;
-                END IF;
-            END $$;
-        """))
+        table_exists_result = table_exists.scalar()
+        
+        # Only apply migrations if users table exists
+        if table_exists_result:
+            # Add username column if it doesn't exist yet (idempotent migration)
+            await conn.execute(text("""
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name   = 'users'
+                          AND column_name  = 'username'
+                    ) THEN
+                        ALTER TABLE public.users ADD COLUMN username VARCHAR(50);
+                        -- Back-fill existing rows with a unique placeholder derived from email
+                        UPDATE public.users
+                           SET username = LOWER(SPLIT_PART(email, '@', 1))
+                                       || LPAD(CAST(EXTRACT(EPOCH FROM NOW())::BIGINT % 10000 AS TEXT), 4, '0')
+                         WHERE username IS NULL;
+                        ALTER TABLE public.users ALTER COLUMN username SET NOT NULL;
+                        CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON public.users (username);
+                    END IF;
+                END $$;
+            """))
+            # Add phone column if it doesn't exist yet (idempotent migration)
+            await conn.execute(text("""
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name   = 'users'
+                          AND column_name  = 'phone'
+                    ) THEN
+                        ALTER TABLE public.users ADD COLUMN phone VARCHAR(20);
+                    END IF;
+                END $$;
+            """))
+            # Add tenant_name column if it doesn't exist yet (idempotent migration)
+            await conn.execute(text("""
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name   = 'users'
+                          AND column_name  = 'tenant_name'
+                    ) THEN
+                        ALTER TABLE public.users ADD COLUMN tenant_name VARCHAR(63);
+                        -- Back-fill from the tenants table
+                        UPDATE public.users u
+                           SET tenant_name = t.schema_name
+                          FROM public.tenants t
+                         WHERE t.id = u.tenant_id;
+                        ALTER TABLE public.users ALTER COLUMN tenant_name SET NOT NULL;
+                    END IF;
+                END $$;
+            """))
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

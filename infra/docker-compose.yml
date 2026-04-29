@@ -62,7 +62,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    command: sh /app/entrypoint.sh
 
   frontend:
     build:

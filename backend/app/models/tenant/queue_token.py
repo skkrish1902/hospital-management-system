@@ -13,7 +13,7 @@ class QueueToken(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     patient_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("patients.id"), nullable=False, index=True)
-    uhid: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
+    uhid: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     appointment_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("appointments.id"))
     visit_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("visits.id"), nullable=True, index=True)
     department_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("departments.id"), index=True)

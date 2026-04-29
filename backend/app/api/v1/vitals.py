@@ -29,10 +29,18 @@ async def record_vitals(
         raise HTTPException(status_code=404, detail="Visit not found")
 
     patient = await session.get(Patient, visit.patient_id)
+
+    # Compute BMI server-side from weight (kg) and height (cm)
+    bmi_value: float | None = None
+    if payload.weight and payload.height and payload.height > 0:
+        height_m = payload.height / 100
+        bmi_value = round(payload.weight / (height_m ** 2), 1)
+
     vitals = Vitals(
         id=uuid.uuid4(),
         uhid=patient.uhid if patient else None,
         recorded_by_user_id=uuid.UUID(current_user["sub"]),
+        bmi=bmi_value,
         **payload.model_dump(),
     )
     session.add(vitals)

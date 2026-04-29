@@ -2,38 +2,18 @@
  * Pharmacy Queue Page
  *
  * Shows patients dispatched to pharmacy.
- * Pharmacist progresses: pending → preparing → ready → dispensed
- * When dispensed, prints the doctor prescription and visit moves to billing_pending.
+ * Pharmacist can Dispense (opens billing modal) or Cancel any active order.
  */
 import { useCallback, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { pharmacyService } from '@/services/pharmacyService'
-import { visitService, consultationService } from '@/services/visitService'
-import { prescriptionService } from '@/services/clinicalService'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import { useAuthStore } from '@/features/auth/authStore'
-import { printPrescription } from '@/utils/printPrescription'
+import PharmacyDispenseModal from './PharmacyDispenseModal'
 import type { PharmacyQueueItem } from '@/types/common'
-
-const STATUS_FLOW: Record<string, { next: string; label: string; color: string } | null> = {
-  pending:   { next: 'preparing', label: 'Start Preparing', color: 'blue' },
-  preparing: { next: 'ready',     label: 'Mark Ready',     color: 'amber' },
-  ready:     { next: 'dispensed', label: 'Dispense',       color: 'green' },
-  dispensed: null,
-}
-
-const STATUS_BADGE: Record<string, string> = {
-  pending:   'bg-gray-100 text-gray-600',
-  preparing: 'bg-blue-100 text-blue-700',
-  ready:     'bg-amber-100 text-amber-700',
-  dispensed: 'bg-green-100 text-green-700',
-  partial:   'bg-yellow-100 text-yellow-700',
-}
 
 export default function PharmacyPage() {
   const qc = useQueryClient()
-  const hospitalName = useAuthStore(s => s.user?.hospitalName ?? s.user?.tenantSchema ?? 'Hospital')
-  const [dispensing, setDispensing] = useState<string | null>(null) // pq item id being dispensed
+  const [dispenseItem, setDispenseItem] = useState<PharmacyQueueItem | null>(null)
 
   const { data: items = [], refetch } = useQuery({
     queryKey: ['pharmacy'],
@@ -50,32 +30,16 @@ export default function PharmacyPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pharmacy'] }),
   })
 
-  // Dispense: print prescription first, then advance status
-  const handleDispense = useCallback(async (item: PharmacyQueueItem) => {
-    if (!item.visit_id || dispensing) return
-    setDispensing(item.id)
-    try {
-      const visitId = String(item.visit_id)
-      const [visit, prescription, consultation] = await Promise.allSettled([
-        visitService.get(visitId),
-        prescriptionService.get(visitId),
-        consultationService.get(visitId),
-      ])
-      printPrescription(
-        visit.status === 'fulfilled'
-          ? visit.value
-          : { patient_name: item.patient_name, created_at: item.updated_at, doctor_name: undefined, department_name: undefined } as any,
-        prescription.status === 'fulfilled' ? prescription.value : null,
-        consultation.status === 'fulfilled' ? consultation.value : null,
-        hospitalName,
-      )
-    } finally {
-      advance({ id: item.id, status: 'dispensed' })
-      setDispensing(null)
-    }
-  }, [dispensing, hospitalName, advance])
+  const handleDispense = useCallback((item: PharmacyQueueItem) => {
+    setDispenseItem(item)
+  }, [])
 
-  const active = items.filter((i: PharmacyQueueItem) => i.status !== 'dispensed')
+  const handleModalDone = useCallback(() => {
+    setDispenseItem(null)
+    qc.invalidateQueries({ queryKey: ['pharmacy'] })
+  }, [qc])
+
+  const active = items.filter((i: PharmacyQueueItem) => i.status !== 'dispensed' && i.status !== 'cancelled')
   const dispensed = items.filter((i: PharmacyQueueItem) => i.status === 'dispensed')
 
   return (
@@ -94,7 +58,7 @@ export default function PharmacyPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {active.map((item: PharmacyQueueItem) => <PharmacyCard key={item.id} item={item} onAdvance={advance} onDispense={handleDispense} advancing={isPending || dispensing === item.id} />)}
+          {active.map((item: PharmacyQueueItem) => <PharmacyCard key={item.id} item={item} onAdvance={advance} onDispense={handleDispense} advancing={isPending} />)}
         </div>
       )}
 
@@ -112,6 +76,14 @@ export default function PharmacyPage() {
           </div>
         </details>
       )}
+
+      {dispenseItem && (
+        <PharmacyDispenseModal
+          item={dispenseItem}
+          onClose={() => setDispenseItem(null)}
+          onDone={handleModalDone}
+        />
+      )}
     </div>
   )
 }
@@ -127,12 +99,7 @@ function PharmacyCard({
   onDispense: (item: PharmacyQueueItem) => void
   advancing: boolean
 }) {
-  const next = STATUS_FLOW[item.status]
-  const btnColor: Record<string, string> = {
-    blue:  'bg-blue-600 hover:bg-blue-700',
-    amber: 'bg-amber-500 hover:bg-amber-600',
-    green: 'bg-green-600 hover:bg-green-700',
-  }
+  const isActionable = item.status !== 'dispensed' && item.status !== 'cancelled'
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
@@ -140,9 +107,6 @@ function PharmacyCard({
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
             <p className="font-semibold text-gray-900">{item.patient_name || 'Patient'}</p>
-            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_BADGE[item.status] || ''}`}>
-              {item.status}
-            </span>
           </div>
           <p className="text-xs text-gray-400">{new Date(item.updated_at).toLocaleTimeString()}</p>
 
@@ -164,14 +128,23 @@ function PharmacyCard({
           )}
         </div>
 
-        {next && (
-          <button
-            disabled={advancing}
-            onClick={() => next.next === 'dispensed' ? onDispense(item) : onAdvance({ id: item.id, status: next.next })}
-            className={`shrink-0 px-4 py-2 text-white rounded-lg text-sm font-medium disabled:opacity-50 ${btnColor[next.color] || 'bg-gray-600'}`}
-          >
-            {advancing && next.next === 'dispensed' ? 'Printing…' : next.label}
-          </button>
+        {isActionable && (
+          <div className="flex flex-col gap-2 shrink-0">
+            <button
+              disabled={advancing}
+              onClick={() => onDispense(item)}
+              className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium disabled:opacity-50"
+            >
+              Dispense
+            </button>
+            <button
+              disabled={advancing}
+              onClick={() => onAdvance({ id: item.id, status: 'cancelled' })}
+              className="px-4 py-2 bg-white hover:bg-red-50 text-red-600 border border-red-300 rounded-lg text-sm font-medium disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
         )}
       </div>
     </div>

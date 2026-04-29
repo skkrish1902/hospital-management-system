@@ -7,13 +7,13 @@
  */
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useForm, useFieldArray } from 'react-hook-form'
+import { useForm, useFieldArray, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { visitService } from '@/services/visitService'
 import { prescriptionService } from '@/services/clinicalService'
 
-const FREQUENCIES: { value: string; label: string }[] = [
+const PRESET_FREQUENCIES: { value: string; label: string }[] = [
   { value: 'OD',  label: 'OD — Once Daily' },
   { value: 'BD',  label: 'BD — Twice Daily' },
   { value: 'TID', label: 'TID — Three Times a Day' },
@@ -24,13 +24,66 @@ const FREQUENCIES: { value: string; label: string }[] = [
   { value: 'Q6H', label: 'Q6H — Every 6 Hours' },
   { value: 'Q8H', label: 'Q8H — Every 8 Hours' },
 ]
+
+const DOSE_OPTIONS = ['0', '½', '1', '2']
+const SLOTS = ['M', 'A', 'E', 'N'] as const
+
+/** Parses "1-0-1-0" → ['1','0','1','0']. Returns null if not in M-A-E-N format. */
+function parseMaen(value: string): string[] | null {
+  const parts = value.split('-')
+  if (parts.length === 4 && parts.every(p => DOSE_OPTIONS.includes(p))) return parts
+  return null
+}
+
+/**
+ * M-A-E-N dosage picker. Renders four slot buttons (M / A / E / N)
+ * each cycling through 0 → ½ → 1 → 2. The combined value is stored
+ * as e.g. "1-0-1-0" in the form field.
+ */
+function DosagePicker({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}) {
+  const parts = parseMaen(value) ?? ['1', '0', '1', '0']
+
+  const cycle = (idx: number) => {
+    const next = [...parts]
+    const cur = DOSE_OPTIONS.indexOf(next[idx])
+    next[idx] = DOSE_OPTIONS[(cur + 1) % DOSE_OPTIONS.length]
+    onChange(next.join('-'))
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      {SLOTS.map((slot, idx) => (
+        <button
+          key={slot}
+          type="button"
+          onClick={() => cycle(idx)}
+          className="flex flex-col items-center w-10 rounded-lg border border-gray-300 bg-gray-50 hover:bg-primary/10 hover:border-primary transition-colors py-1 select-none"
+          title={`${slot}: click to change`}
+        >
+          <span className="text-[10px] font-semibold text-gray-400 leading-none">{slot}</span>
+          <span className="text-sm font-bold text-gray-800 leading-tight mt-0.5">{parts[idx]}</span>
+        </button>
+      ))}
+      <span className="text-xs text-gray-400 ml-1">{value}</span>
+    </div>
+  )
+}
 const ROUTES = ['oral', 'topical', 'IV', 'IM', 'SC', 'sublingual', 'inhaled', 'rectal']
 const DURATIONS = ['1 day', '3 days', '5 days', '7 days', '10 days', '14 days', '1 month', 'Ongoing']
+
+const FOOD_INSTRUCTIONS = ['Before Food', 'After Food', 'With Food', 'N/A'] as const
 
 const medicineSchema = z.object({
   name: z.string().min(1, 'Drug name required'),
   dose: z.string().min(1, 'Dose required'),
   frequency: z.string().min(1, 'Frequency required'),
+  food_instruction: z.enum(FOOD_INSTRUCTIONS).default('N/A'),
   duration: z.string().min(1, 'Duration required'),
   route: z.string().default('oral'),
   notes: z.string().optional(),
@@ -60,6 +113,8 @@ type RxForm = z.infer<typeof rxSchema>
 export default function PrescriptionPage() {
   const { visitId } = useParams<{ visitId: string }>()
   const navigate = useNavigate()
+  // When the doctor comes back from here, we want to resume editing that consultation
+  const backToConsultation = () => navigate('/doctor/consultation', { state: { resumeVisitId: visitId } })
   const qc = useQueryClient()
 
   const { data: visit } = useQuery({
@@ -105,7 +160,7 @@ export default function PrescriptionPage() {
             </p>
           )}
         </div>
-        <button onClick={() => navigate(-1)} className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">
+        <button onClick={backToConsultation} className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
@@ -122,7 +177,7 @@ export default function PrescriptionPage() {
             <h2 className="text-sm font-semibold text-gray-700">Medicines</h2>
             <button
               type="button"
-              onClick={() => append({ name: '', dose: '', frequency: 'OD', duration: '5 days', route: 'oral' })}
+              onClick={() => append({ name: '', dose: '', frequency: '1-0-1-0', food_instruction: 'N/A', duration: '5 days', route: 'oral' })}
               className="text-xs text-primary hover:underline font-medium flex items-center gap-1"
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -170,11 +225,32 @@ export default function PrescriptionPage() {
                     <input {...register(`medicines.${i}.dose`)} placeholder="e.g. 500mg" className={rx_input(!!errors.medicines?.[i]?.dose)} />
                   </div>
 
-                  <div>
+                  <div className="col-span-2">
                     <label className="block text-xs font-medium text-gray-600 mb-1">Frequency *</label>
-                    <select {...register(`medicines.${i}.frequency`)} className={rx_input(false)}>
-                      {FREQUENCIES.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
-                    </select>
+                    <Controller
+                      control={control}
+                      name={`medicines.${i}.frequency`}
+                      render={({ field }) => (
+                        <FrequencyField value={field.value} onChange={field.onChange} />
+                      )}
+                    />
+                  </div>
+
+                  <div className="col-span-2">
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Food Instruction</label>
+                    <div className="flex flex-wrap gap-3">
+                      {FOOD_INSTRUCTIONS.map(opt => (
+                        <label key={opt} className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="radio"
+                            value={opt}
+                            {...register(`medicines.${i}.food_instruction`)}
+                            className="accent-primary"
+                          />
+                          <span className="text-sm text-gray-700">{opt}</span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
 
                   <div>
@@ -266,7 +342,7 @@ export default function PrescriptionPage() {
 
         {/* Actions */}
         <div className="flex gap-3">
-          <button type="button" onClick={() => navigate(-1)}
+          <button type="button" onClick={backToConsultation}
             className="border border-gray-300 text-gray-700 px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-50">
             Back
           </button>
@@ -282,4 +358,51 @@ export default function PrescriptionPage() {
 
 function rx_input(hasError: boolean) {
   return `w-full border ${hasError ? 'border-red-400' : 'border-gray-300'} rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary`
+}
+
+/**
+ * Combined frequency field: preset dropdown OR M-A-E-N picker.
+ * If the current value looks like M-A-E-N (e.g. "1-0-1-0"), shows the picker.
+ * Otherwise shows a preset dropdown with an option to switch to M-A-E-N mode.
+ */
+function FrequencyField({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}) {
+  const isMaen = parseMaen(value) !== null
+
+  return (
+    <div className="space-y-1.5">
+      {isMaen ? (
+        <div className="space-y-1">
+          <DosagePicker value={value} onChange={onChange} />
+          <button
+            type="button"
+            onClick={() => onChange('OD')}
+            className="text-xs text-primary hover:underline"
+          >
+            Switch to preset
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-1">
+          <select value={value} onChange={e => onChange(e.target.value)} className={rx_input(false)}>
+            {PRESET_FREQUENCIES.map(f => (
+              <option key={f.value} value={f.value}>{f.label}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => onChange('1-0-1-0')}
+            className="text-xs text-primary hover:underline"
+          >
+            Use M-A-E-N dosage
+          </button>
+        </div>
+      )}
+    </div>
+  )
 }

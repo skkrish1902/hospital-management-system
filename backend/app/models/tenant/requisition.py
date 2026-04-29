@@ -1,8 +1,10 @@
 import uuid
 from datetime import date
+from decimal import Decimal
 
-from sqlalchemy import Date, ForeignKey, Integer, String, Text
+from sqlalchemy import Date, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
+from typing import Optional
 
 from app.db.base import Base, TimestampMixin
 
@@ -35,3 +37,6 @@ class Requisition(Base, TimestampMixin):
 
     # Status: pending | approved | rejected | fulfilled
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")
+
+    # Expenditure amount in INR (set by hospital_admin after fulfillment)
+    amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)

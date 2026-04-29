@@ -9,6 +9,7 @@ class MedicineItem(BaseModel):
     name: str
     dose: str
     frequency: str   # OD | BD | TID | QID | SOS | etc.
+    food_instruction: str = "N/A"  # Before Food | After Food | With Food | N/A
     duration: str    # "5 days", "1 week"
     route: str = "oral"
     notes: Optional[str] = None

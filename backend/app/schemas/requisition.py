@@ -1,5 +1,7 @@
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -23,6 +25,7 @@ class RequisitionRead(BaseModel):
     need_by_date: date
     items: str
     status: str
+    amount: Optional[Decimal] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -30,3 +33,11 @@ class RequisitionRead(BaseModel):
 
 class RequisitionStatusUpdate(BaseModel):
     status: str   # pending | approved | rejected | fulfilled
+
+
+class RequisitionAmountUpdate(BaseModel):
+    amount: Optional[Decimal] = None  # INR, e.g. 10.50
+
+
+class RequisitionItemsUpdate(BaseModel):
+    items: str  # serialized string, e.g. "Sanitizer x2, Bandages x5"

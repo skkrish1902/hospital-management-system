@@ -287,7 +287,7 @@ export interface PharmacyQueueItem {
   id: UUID
   prescription_id: UUID
   visit_id?: UUID
-  status: 'pending' | 'preparing' | 'ready' | 'partial' | 'dispensed'
+  status: 'pending' | 'preparing' | 'ready' | 'partial' | 'dispensed' | 'cancelled'
   notes?: string
   updated_at: string
   patient_name?: string
