@@ -6,7 +6,7 @@ from app.models.tenant.queue_token import QueueToken
 from app.models.tenant.visit import Visit
 from app.models.tenant.vitals import Vitals
 from app.models.tenant.consultation import Consultation
-from app.models.tenant.prescription import Prescription
+from app.models.tenant.prescription import Prescription, PrescriptionItem
 from app.models.tenant.lab_order import LabOrder, LabResult
 from app.models.tenant.pharmacy_queue import PharmacyQueue
 from app.models.tenant.invoice import Invoice
@@ -25,6 +25,7 @@ __all__ = [
     "Vitals",
     "Consultation",
     "Prescription",
+    "PrescriptionItem",
     "LabOrder",
     "LabResult",
     "PharmacyQueue",

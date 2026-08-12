@@ -24,13 +24,13 @@ Only the explicitly assigned phase may be implemented.
 | 3     | Canonical OPD State Machine           | COMPLETE |
 | 4     | Visit as Encounter Backbone           | COMPLETE |
 | 5     | Reception / Register Visit            | COMPLETE |
-| 6     | Patient Registration Enhancements     | CURRENT  |
-| 7     | Nurse Queue                           | PENDING  |
-| 8     | Complete Pre-Vitals                   | PENDING  |
-| 9     | Doctor Queue                          | PENDING  |
-| 10    | Consultation                          | PENDING  |
-| 11    | Structured Prescription               | PENDING  |
-| 12    | Pharmacy Workflow                     | PENDING  |
+| 6     | Patient Registration Enhancements     | COMPLETE |
+| 7     | Nurse Queue                           | COMPLETE |
+| 8     | Complete Pre-Vitals                   | COMPLETE |
+| 9     | Doctor Queue                          | COMPLETE |
+| 10    | Consultation                          | COMPLETE |
+| 11    | Structured Prescription               | COMPLETE |
+| 12    | Pharmacy Workflow                     | COMPLETE |
 | 13    | Lab Workflow                          | PENDING  |
 | 14    | Billing Workflow                      | PENDING  |
 | 15    | Queue / Real-Time Events              | PENDING  |

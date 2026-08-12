@@ -20,5 +20,5 @@ class PharmacyQueueRead(BaseModel):
 
 
 class PharmacyStatusUpdate(BaseModel):
-    status: str   # pending | preparing | ready | partial | dispensed
+    status: str   # pending | called | dispensing | dispensed | partially_dispensed | out_of_stock | cancelled
     notes: Optional[str] = None

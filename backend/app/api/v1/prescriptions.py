@@ -6,12 +6,13 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import require_role
 from app.db.engine import get_session
 from app.models.tenant.lab_order import LabOrder
 from app.models.tenant.patient import Patient
-from app.models.tenant.prescription import Prescription
+from app.models.tenant.prescription import Prescription, PrescriptionItem
 from app.models.tenant.visit import Visit, VisitStatus
 from app.schemas.prescription import PrescriptionCreate, PrescriptionRead, PrescriptionUpdate
 from app.services.visit_workflow import VisitTransitionSource, VisitWorkflowService
@@ -33,9 +34,8 @@ async def create_prescription(
     patient = await session.get(Patient, visit.patient_id)
     uhid = patient.uhid if patient else None
 
-    medicines_data = (
-        [m.model_dump() for m in payload.medicines] if payload.medicines else None
-    )
+    item_source = payload.items if payload.items is not None else payload.medicines
+    medicines_data = [m.model_dump() for m in item_source] if item_source else None
 
     # Upsert — each visit has at most one prescription
     existing_rx = (await session.execute(
@@ -45,15 +45,49 @@ async def create_prescription(
     if existing_rx:
         existing_rx.medicines = medicines_data
         existing_rx.instructions = payload.instructions
+        existing_rx.consultation_id = payload.consultation_id or existing_rx.consultation_id
+        existing_rx.doctor_id = payload.doctor_id or visit.doctor_id or existing_rx.doctor_id
+        existing_rx.status = "finalized"
+        existing_rx.items = [
+            PrescriptionItem(
+                id=uuid.uuid4(),
+                medicine=item.medicine,
+                strength=item.strength,
+                dose=item.dose,
+                route=item.route,
+                frequency=item.frequency,
+                duration=item.duration,
+                quantity=item.quantity,
+                instructions=item.instructions,
+            )
+            for item in item_source or []
+        ]
         prescription = existing_rx
     else:
         prescription = Prescription(
             id=uuid.uuid4(),
             visit_id=payload.visit_id,
+            consultation_id=payload.consultation_id,
+            doctor_id=payload.doctor_id or visit.doctor_id,
             uhid=uhid,
             medicines=medicines_data,
             instructions=payload.instructions,
+            status="finalized",
         )
+        prescription.items = [
+            PrescriptionItem(
+                id=uuid.uuid4(),
+                medicine=item.medicine,
+                strength=item.strength,
+                dose=item.dose,
+                route=item.route,
+                frequency=item.frequency,
+                duration=item.duration,
+                quantity=item.quantity,
+                instructions=item.instructions,
+            )
+            for item in item_source or []
+        ]
         session.add(prescription)
 
     # If doctor included lab tests, upsert a LabOrder alongside the prescription
@@ -88,7 +122,12 @@ async def create_prescription(
             pass
 
     await session.commit()
-    await session.refresh(prescription)
+    loaded = await session.execute(
+        select(Prescription)
+        .options(selectinload(Prescription.items))
+        .where(Prescription.id == prescription.id)
+    )
+    prescription = loaded.scalar_one()
 
     # Notify pharmacy and nurse dispatch queue
     tenant = current_user.get("tenant_schema", "public")
@@ -114,18 +153,42 @@ async def update_prescription(
     _: dict = Depends(require_role("doctor", "hospital_admin", "super_admin")),
 ):
     rx = (await session.execute(
-        select(Prescription).where(Prescription.visit_id == visit_id)
+        select(Prescription).options(selectinload(Prescription.items)).where(Prescription.visit_id == visit_id)
     )).scalar_one_or_none()
     if not rx:
         raise HTTPException(status_code=404, detail="Prescription not found for this visit")
 
-    if payload.medicines is not None:
-        rx.medicines = [m.model_dump() for m in payload.medicines]
+    item_source = payload.items if payload.items is not None else payload.medicines
+    if item_source is not None:
+        rx.medicines = [m.model_dump() for m in item_source]
+        rx.items = [
+            PrescriptionItem(
+                id=uuid.uuid4(),
+                medicine=item.medicine,
+                strength=item.strength,
+                dose=item.dose,
+                route=item.route,
+                frequency=item.frequency,
+                duration=item.duration,
+                quantity=item.quantity,
+                instructions=item.instructions,
+            )
+            for item in item_source
+        ]
+    if payload.consultation_id is not None:
+        rx.consultation_id = payload.consultation_id
+    if payload.doctor_id is not None:
+        rx.doctor_id = payload.doctor_id
     if payload.instructions is not None:
         rx.instructions = payload.instructions
 
     await session.commit()
-    await session.refresh(rx)
+    loaded = await session.execute(
+        select(Prescription)
+        .options(selectinload(Prescription.items))
+        .where(Prescription.id == rx.id)
+    )
+    rx = loaded.scalar_one()
     return rx
 
 
@@ -136,7 +199,7 @@ async def get_prescription(
     _: dict = Depends(require_role("doctor", "nurse", "pharmacist", "hospital_admin", "super_admin")),
 ):
     rx = (await session.execute(
-        select(Prescription).where(Prescription.visit_id == visit_id)
+        select(Prescription).options(selectinload(Prescription.items)).where(Prescription.visit_id == visit_id)
     )).scalar_one_or_none()
     if not rx:
         raise HTTPException(status_code=404, detail="Prescription not found for this visit")

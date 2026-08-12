@@ -29,25 +29,44 @@ async def record_vitals(
     if not visit:
         raise HTTPException(status_code=404, detail="Visit not found")
 
+    allowed_states = {VisitStatus.WAITING_FOR_NURSE.value, VisitStatus.IN_PRE_VITAL.value}
+    if visit.status not in allowed_states:
+        raise HTTPException(
+            status_code=400,
+            detail="Pre-vitals can only be recorded while the patient is waiting for nurse assessment or already in pre-vitals.",
+        )
+
+    if visit.status == VisitStatus.WAITING_FOR_NURSE.value:
+        try:
+            await VisitWorkflowService.transition(
+                session,
+                visit,
+                VisitStatus.IN_PRE_VITAL,
+                current_user.get("sub"),
+                VisitTransitionSource.NURSE,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     patient = await session.get(Patient, visit.patient_id)
 
-    # Compute BMI server-side from weight (kg) and height (cm)
     bmi_value: float | None = None
     if payload.weight and payload.height and payload.height > 0:
         height_m = payload.height / 100
         bmi_value = round(payload.weight / (height_m ** 2), 1)
 
-    vitals = Vitals(
-        id=uuid.uuid4(),
-        uhid=patient.uhid if patient else None,
-        recorded_by_user_id=uuid.UUID(current_user["sub"]),
-        bmi=bmi_value,
-        **payload.model_dump(),
-    )
+    now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    payload_data = payload.model_dump()
+    payload_data["bmi"] = bmi_value
+    payload_data["uhid"] = patient.uhid if patient else None
+    payload_data["recorded_by_user_id"] = uuid.UUID(current_user["sub"])
+    payload_data["started_at"] = now
+    payload_data["completed_at"] = now if payload.status == "completed" else None
+    payload_data["status"] = payload.status
+    vitals = Vitals(**payload_data)
     session.add(vitals)
 
-    # Canonical OPD state progresses to the post-vitals doctor queue.
-    if visit.status == VisitStatus.REGISTERED.value:
+    if payload.status == "completed":
         try:
             await VisitWorkflowService.transition(
                 session,
@@ -56,18 +75,19 @@ async def record_vitals(
                 current_user.get("sub"),
                 VisitTransitionSource.NURSE,
             )
-        except ValueError:
-            pass
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     await session.commit()
     await session.refresh(vitals)
 
-    # Notify doctor queue
     tenant = current_user.get("tenant_schema", "public")
     await ws_manager.broadcast(tenant, "visit:update", {
         "event": "vitals_recorded",
         "visit_id": str(visit.id),
         "patient_id": str(visit.patient_id),
+        "status": visit.status,
+        "vitals_status": vitals.status,
     })
 
     return vitals

@@ -126,7 +126,7 @@ async def list_visits(
             stmt = stmt.where(Visit.department_id == department_id)
         else:
             stmt = stmt.where(Visit.department_id.in_(assigned_dept_ids))
-    # Doctors are restricted to their own patients — enforced server-side
+    # Doctors are restricted to their own patients and only the doctor-ready queue
     elif current_user.get("role") == "doctor":
         doctor_row = (await session.execute(
             select(Doctor).where(Doctor.user_id == uuid.UUID(current_user["sub"]))
@@ -134,6 +134,10 @@ async def list_visits(
         if not doctor_row:
             return []  # Doctor account not linked to a Doctor record
         stmt = stmt.where(Visit.doctor_id == doctor_row.id)
+        if status_filter:
+            stmt = stmt.where(Visit.status == status_filter)
+        else:
+            stmt = stmt.where(Visit.status == VisitStatus.WAITING_FOR_DOCTOR.value)
         if department_id:
             stmt = stmt.where(Visit.department_id == department_id)
     elif department_id:

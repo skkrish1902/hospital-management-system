@@ -3,6 +3,7 @@ Consultations API — doctor SOAP notes + ICD-10 diagnosis.
 Creates or updates a consultation record keyed 1:1 with visit_id.
 """
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import require_role
 from app.db.engine import get_session
 from app.models.tenant.consultation import Consultation
+from app.models.tenant.doctor import Doctor
 from app.models.tenant.patient import Patient
 from app.models.tenant.visit import Visit, VisitStatus
 from app.schemas.consultation import ConsultationCreate, ConsultationRead, ConsultationUpdate
@@ -30,7 +32,23 @@ async def create_consultation(
     if not visit:
         raise HTTPException(status_code=404, detail="Visit not found")
 
-    # Upsert — each visit has at most one consultation
+    if current_user.get("role") == "doctor":
+        doctor_row = (await session.execute(
+            select(Doctor).where(Doctor.user_id == uuid.UUID(current_user["sub"]))
+        )).scalar_one_or_none()
+        if not doctor_row:
+            raise HTTPException(status_code=403, detail="Doctor profile not linked to this account")
+        if visit.doctor_id != doctor_row.id:
+            raise HTTPException(status_code=403, detail="This patient is not assigned to your doctor queue")
+        if doctor_row.department_id and visit.department_id and doctor_row.department_id != visit.department_id:
+            raise HTTPException(status_code=403, detail="This visit is not in an allowed department for this doctor")
+
+    if visit.status not in {VisitStatus.WAITING_FOR_DOCTOR.value, VisitStatus.IN_CONSULTATION.value}:
+        raise HTTPException(
+            status_code=400,
+            detail="Consultation can only begin from the doctor queue or while the patient is already in consultation.",
+        )
+
     existing = (await session.execute(
         select(Consultation).where(Consultation.visit_id == payload.visit_id)
     )).scalar_one_or_none()
@@ -43,7 +61,6 @@ async def create_consultation(
 
     patient = await session.get(Patient, visit.patient_id)
     data = payload.model_dump()
-    # Defensive normalization for diagnosis_icd10
     diag = data.get("diagnosis_icd10")
     if isinstance(diag, str):
         if diag.strip() in ("null", "", "[]"):
@@ -60,17 +77,35 @@ async def create_consultation(
         data["diagnosis_icd10"] = [diag] if diag else None
     elif isinstance(diag, list) and len(diag) == 0:
         data["diagnosis_icd10"] = None
-    
+
+    now = datetime.now(timezone.utc)
+    status_value = data.get("status") or "draft"
+    data["status"] = status_value
+    data["started_at"] = now if status_value in {"draft", "in_progress", "completed"} else None
+    data["completed_at"] = now if status_value == "completed" else None
+    data["amended_at"] = None
+
     consult = Consultation(id=uuid.uuid4(), uhid=patient.uhid if patient else None, **data)
     session.add(consult)
 
-    # OPD consultation starts only from the doctor-ready state
     if visit.status == VisitStatus.WAITING_FOR_DOCTOR.value:
         try:
             await VisitWorkflowService.transition(
                 session,
                 visit,
                 VisitStatus.IN_CONSULTATION,
+                current_user.get("sub"),
+                VisitTransitionSource.DOCTOR,
+            )
+        except ValueError:
+            pass
+
+    if consult.status == "completed":
+        try:
+            await VisitWorkflowService.transition(
+                session,
+                visit,
+                VisitStatus.CONSULTATION_COMPLETED,
                 current_user.get("sub"),
                 VisitTransitionSource.DOCTOR,
             )
@@ -95,8 +130,17 @@ async def update_consultation(
     if not consult:
         raise HTTPException(status_code=404, detail="Consultation not found for this visit")
 
+    visit = await session.get(Visit, visit_id)
+    if not visit:
+        raise HTTPException(status_code=404, detail="Visit not found")
+
+    if consult.status == "completed" and (payload.status is None or payload.status != "amended"):
+        raise HTTPException(
+            status_code=400,
+            detail="Completed consultation cannot be silently overwritten. Set status='amended' to create a controlled amendment.",
+        )
+
     data = payload.model_dump(exclude_unset=True)
-    # Defensive normalization for diagnosis_icd10
     if "diagnosis_icd10" in data:
         diag = data["diagnosis_icd10"]
         if isinstance(diag, str):
@@ -114,9 +158,37 @@ async def update_consultation(
             data["diagnosis_icd10"] = [diag] if diag else None
         elif isinstance(diag, list) and len(diag) == 0:
             data["diagnosis_icd10"] = None
-    
+
+    if "status" in data:
+        new_status = data["status"]
+        if new_status == "completed":
+            consult.completed_at = datetime.now(timezone.utc)
+            try:
+                await VisitWorkflowService.transition(
+                    session,
+                    visit,
+                    VisitStatus.CONSULTATION_COMPLETED,
+                    current_user.get("sub"),
+                    VisitTransitionSource.DOCTOR,
+                )
+            except ValueError:
+                pass
+        elif new_status == "amended":
+            consult.amended_at = datetime.now(timezone.utc)
+        elif new_status in {"draft", "in_progress"}:
+            consult.started_at = consult.started_at or datetime.now(timezone.utc)
+            consult.completed_at = None
+
     for field, value in data.items():
+        if field == "status":
+            consult.status = value
+            continue
         setattr(consult, field, value)
+
+    if consult.status == "completed" and not consult.completed_at:
+        consult.completed_at = datetime.now(timezone.utc)
+    if consult.status == "draft" and not consult.started_at:
+        consult.started_at = datetime.now(timezone.utc)
 
     await session.commit()
     await session.refresh(consult)

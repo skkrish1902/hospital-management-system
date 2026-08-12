@@ -1,12 +1,13 @@
 import uuid
 from datetime import date, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, validator
 
 
 class ConsultationCreate(BaseModel):
     visit_id: uuid.UUID
+    status: Literal["draft", "in_progress", "completed", "amended"] = "draft"
     chief_complaint: Optional[str] = None
     history: Optional[str] = None
     examination: Optional[str] = None
@@ -36,6 +37,7 @@ class ConsultationCreate(BaseModel):
 
 
 class ConsultationUpdate(BaseModel):
+    status: Optional[Literal["draft", "in_progress", "completed", "amended"]] = None
     chief_complaint: Optional[str] = None
     history: Optional[str] = None
     examination: Optional[str] = None
@@ -66,12 +68,16 @@ class ConsultationUpdate(BaseModel):
 class ConsultationRead(BaseModel):
     id: uuid.UUID
     visit_id: uuid.UUID
+    status: str = "draft"
     chief_complaint: Optional[str] = None
     history: Optional[str] = None
     examination: Optional[str] = None
     diagnosis_icd10: Optional[List[Dict[str, Any]]] = None
     notes: Optional[str] = None
     follow_up_date: Optional[date] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    amended_at: Optional[datetime] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

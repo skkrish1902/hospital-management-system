@@ -75,26 +75,13 @@ async def update_pharmacy_status(
     if not pq:
         raise HTTPException(status_code=404, detail="Pharmacy queue item not found")
 
+    allowed_statuses = {"pending", "called", "dispensing", "dispensed", "partially_dispensed", "out_of_stock", "cancelled"}
+    if payload.status not in allowed_statuses:
+        raise HTTPException(status_code=400, detail=f"Unsupported pharmacy status: {payload.status}")
+
     pq.status = payload.status
     if payload.notes is not None:
         pq.notes = payload.notes
-
-    # When dispensed, move the visit to billing_pending
-    if payload.status == "dispensed":
-        rx = await session.get(Prescription, pq.prescription_id)
-        if rx:
-            visit = await session.get(Visit, rx.visit_id)
-            if visit and visit.status == VisitStatus.CONSULTATION_COMPLETED.value:
-                try:
-                    await VisitWorkflowService.transition(
-                        session,
-                        visit,
-                        VisitStatus.CLOSED,
-                        current_user.get("sub"),
-                        VisitTransitionSource.SYSTEM,
-                    )
-                except ValueError:
-                    pass
 
     await session.commit()
     await session.refresh(pq)
@@ -198,8 +185,9 @@ async def bill_pharmacy_dispense(
     pq = await session.get(PharmacyQueue, pq_id)
     if not pq:
         raise HTTPException(status_code=404, detail="Pharmacy queue item not found")
-    if pq.status not in ("ready", "preparing", "pending"):
-        raise HTTPException(status_code=400, detail=f"Queue item already {pq.status}")
+    allowed_billable_statuses = {"pending", "called", "dispensing"}
+    if pq.status not in allowed_billable_statuses:
+        raise HTTPException(status_code=400, detail=f"Queue item is not billable in status {pq.status}")
 
     rx = await session.get(Prescription, pq.prescription_id)
     if not rx:
