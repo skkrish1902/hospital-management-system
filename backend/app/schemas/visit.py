@@ -4,6 +4,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
+from app.models.tenant.visit import VisitStatus
+
 
 class VisitCreate(BaseModel):
     patient_id: uuid.UUID
@@ -18,7 +20,7 @@ class VisitRead(BaseModel):
     doctor_id: Optional[uuid.UUID] = None
     appointment_id: Optional[uuid.UUID] = None
     department_id: Optional[uuid.UUID] = None
-    status: str
+    status: VisitStatus
     created_at: datetime
     closed_at: Optional[datetime] = None
     # Joined display fields
@@ -35,8 +37,7 @@ class VisitRead(BaseModel):
 
 
 class VisitStatusUpdate(BaseModel):
-    status: str
-    # registered | vitals_done | in_consultation | prescription_done | dispatched_pharmacy | dispatched_lab | billing_pending | closed
+    status: VisitStatus
 
 
 class VisitDispatch(BaseModel):

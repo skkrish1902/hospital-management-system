@@ -18,11 +18,34 @@ from app.db.engine import AsyncSessionLocal, get_session, tenant_schema_var
 from app.models.tenant.invoice import Invoice
 from app.models.tenant.patient import Patient
 from app.models.tenant.pharmacy_queue import PharmacyQueue
-from app.models.tenant.visit import Visit
+from app.models.tenant.visit import Visit, VisitStatus
 from app.schemas.invoice import InvoiceCreate, InvoicePayment, InvoiceRead
+from app.services.visit_workflow import VisitTransitionSource, VisitWorkflowService
 from app.websocket.manager import ws_manager
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_razorpay_context(event_data: dict) -> dict:
+    """Return the normalized Razorpay order/payment metadata for webhook handling."""
+    payment_entity = event_data.get("payload", {}).get("payment", {}).get("entity", {})
+    order_entity = event_data.get("payload", {}).get("order", {}).get("entity", {})
+    order_notes = order_entity.get("notes") or {}
+    payment_notes = payment_entity.get("notes") or {}
+    order_tenant = order_notes.get("tenant_schema")
+    payment_tenant = payment_notes.get("tenant_schema")
+    tenant_schema = (order_tenant or payment_tenant or "")
+
+    return {
+        "order_id": payment_entity.get("order_id") or order_entity.get("id"),
+        "payment_id": payment_entity.get("id"),
+        "payment_method": payment_entity.get("method"),
+        "tenant_schema": tenant_schema,
+        "order_notes": order_notes,
+        "payment_notes": payment_notes,
+        "tenant_conflict": bool(order_tenant and payment_tenant and order_tenant != payment_tenant),
+    }
+
 
 # Protected router — requires billing feature enabled in tenant's plan
 router = APIRouter(dependencies=[Depends(require_feature("billing"))])
@@ -93,9 +116,7 @@ async def create_invoice(
     )
     session.add(invoice)
 
-    # Move visit to billing_pending
-    if visit.status == "prescription_done":
-        visit.status = "billing_pending"
+    # Billing is a separate downstream workflow; it does not mutate OPD visit state.
 
     await session.commit()
     await session.refresh(invoice)
@@ -137,12 +158,17 @@ async def pay_invoice(
     # pre_billing (upfront at reception) → registered (now visible to nurse)
     # billing_pending (end of OPD after doctor) → closed
     visit = await session.get(Visit, invoice.visit_id)
-    if visit:
-        if visit.status == "pre_billing":
-            visit.status = "registered"
-        elif visit.status == "billing_pending":
-            visit.status = "closed"
-            visit.closed_at = datetime.now(timezone.utc)
+    if visit and visit.status == VisitStatus.CONSULTATION_COMPLETED.value:
+        try:
+            await VisitWorkflowService.transition(
+                session,
+                visit,
+                VisitStatus.CLOSED,
+                current_user.get("sub"),
+                VisitTransitionSource.SYSTEM,
+            )
+        except ValueError:
+            pass
 
     await session.commit()
     await session.refresh(invoice)
@@ -173,16 +199,8 @@ async def sync_razorpay_payment(
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
     if invoice.status == "paid":
-        # Invoice already paid — but visit might be stuck in pre_billing due to a
-        # partial webhook failure. Check and repair without re-processing payment.
-        visit = await session.get(Visit, invoice.visit_id)
-        if visit and visit.status == "pre_billing":
-            visit.status = "registered"
-            await session.commit()
-        elif visit and visit.status == "billing_pending":
-            visit.status = "closed"
-            visit.closed_at = datetime.now(timezone.utc)
-            await session.commit()
+        # Invoice already paid — keep the OPD lifecycle canonical and do not mutate
+        # visit.status through legacy billing-state repair logic.
         return invoice
     if not invoice.razorpay_order_id:
         raise HTTPException(status_code=400, detail="No Razorpay order linked to this invoice")
@@ -197,11 +215,17 @@ async def sync_razorpay_payment(
     invoice.paid_at = datetime.now(timezone.utc)
 
     visit = await session.get(Visit, invoice.visit_id)
-    if visit and visit.status == "pre_billing":
-        visit.status = "registered"
-    elif visit and visit.status == "billing_pending":
-        visit.status = "closed"
-        visit.closed_at = datetime.now(timezone.utc)
+    if visit and visit.status == VisitStatus.CONSULTATION_COMPLETED.value:
+        try:
+            await VisitWorkflowService.transition(
+                session,
+                visit,
+                VisitStatus.CLOSED,
+                current_user.get("sub"),
+                VisitTransitionSource.SYSTEM,
+            )
+        except ValueError:
+            pass
 
     await session.commit()
     await session.refresh(invoice)
@@ -291,11 +315,6 @@ async def admit_patient_manually(
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
     if invoice.status == "paid":
-        # Already paid — just repair the visit if stuck
-        visit = await session.get(Visit, invoice.visit_id)
-        if visit and visit.status == "pre_billing":
-            visit.status = "registered"
-            await session.commit()
         return invoice
 
     invoice.payment_method = "cash"
@@ -303,8 +322,17 @@ async def admit_patient_manually(
     invoice.paid_at = datetime.now(timezone.utc)
 
     visit = await session.get(Visit, invoice.visit_id)
-    if visit and visit.status == "pre_billing":
-        visit.status = "registered"
+    if visit and visit.status == VisitStatus.CONSULTATION_COMPLETED.value:
+        try:
+            await VisitWorkflowService.transition(
+                session,
+                visit,
+                VisitStatus.CLOSED,
+                current_user.get("sub"),
+                VisitTransitionSource.SYSTEM,
+            )
+        except ValueError:
+            pass
 
     await session.commit()
     await session.refresh(invoice)
@@ -349,22 +377,36 @@ async def razorpay_webhook(request: Request):
         logger.info("Webhook: Ignoring event type: %s", event_data.get("event"))
         return {"status": "ignored"}
 
-    payment_entity = event_data.get("payload", {}).get("payment", {}).get("entity", {})
-    order_id = payment_entity.get("order_id")
-    payment_id = payment_entity.get("id")
-    payment_method = payment_entity.get("method")  # upi / card / netbanking
-    notes = payment_entity.get("notes") or {}
-    tenant_schema = notes.get("tenant_schema", "")
-    
+    razorpay_context = _extract_razorpay_context(event_data)
+    order_id = razorpay_context["order_id"]
+    payment_id = razorpay_context["payment_id"]
+    payment_method = razorpay_context["payment_method"]  # upi / card / netbanking
+    tenant_schema = razorpay_context["tenant_schema"]
+    order_notes = razorpay_context["order_notes"]
+    payment_notes = razorpay_context["payment_notes"]
+
+    if razorpay_context.get("tenant_conflict"):
+        logger.warning(
+            "Razorpay webhook: tenant mismatch between order notes and payment notes; using order tenant. "
+            "order=%s payment=%s order_id=%s",
+            order_notes.get("tenant_schema"),
+            payment_notes.get("tenant_schema"),
+            order_id,
+        )
+
     logger.info(
-        "Webhook: Extracted data: order_id=%s, payment_id=%s, tenant=%s, method=%s",
-        order_id, payment_id, tenant_schema, payment_method,
+        "Webhook: Extracted data: order_id=%s, payment_id=%s, tenant=%s, method=%s, order_notes=%s, payment_notes=%s",
+        order_id, payment_id, tenant_schema, payment_method, order_notes, payment_notes,
     )
 
-    if not order_id or not tenant_schema or not tenant_schema.replace("_", "").isalnum():
+    if not order_id:
+        logger.warning("Razorpay webhook: missing order_id. Refusing to process payment.")
+        return {"status": "ok"}
+
+    if not tenant_schema or not tenant_schema.replace("_", "").isalnum():
         logger.warning(
-            "Razorpay webhook: missing order_id or tenant_schema. order_id=%s tenant=%s",
-            order_id, tenant_schema,
+            "Razorpay webhook: missing or invalid tenant_schema. order_id=%s tenant=%s order_notes=%s payment_notes=%s",
+            order_id, tenant_schema, order_notes, payment_notes,
         )
         return {"status": "ok"}  # acknowledge so Razorpay stops retrying
 
@@ -414,11 +456,17 @@ async def razorpay_webhook(request: Request):
             )
 
             visit = await session.get(Visit, invoice.visit_id)
-            if visit and visit.status == "pre_billing":
-                visit.status = "registered"
-            elif visit and visit.status == "billing_pending":
-                visit.status = "closed"
-                visit.closed_at = datetime.now(timezone.utc)
+            if visit and visit.status == VisitStatus.CONSULTATION_COMPLETED.value:
+                try:
+                    await VisitWorkflowService.transition(
+                        session,
+                        visit,
+                        VisitStatus.CLOSED,
+                        current_user.get("sub"),
+                        VisitTransitionSource.SYSTEM,
+                    )
+                except ValueError:
+                    pass
 
             # If this was a pharmacy dispense invoice, advance the queue
             if invoice.source == "pharmacy" and invoice.pharmacy_queue_id:
@@ -429,8 +477,6 @@ async def razorpay_webhook(request: Request):
                         "Webhook: Marked pharmacy queue %s as dispensed",
                         invoice.pharmacy_queue_id,
                     )
-                    if visit and visit.status == "dispatched_pharmacy":
-                        visit.status = "billing_pending"
 
             await session.commit()
             logger.info(

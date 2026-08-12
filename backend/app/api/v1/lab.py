@@ -66,16 +66,10 @@ async def list_lab_orders(
     if status_filter:
         stmt = stmt.where(LabOrder.status == status_filter)
 
-    # Lab technicians only see orders after the nurse has dispatched the visit to lab
+    # Lab technicians only need to act on orders not yet finalized.
+    # LabOrder maintains its own status independent of the OPD visit lifecycle.
     if current_user.get("role") == "lab_technician":
-        _LAB_VISIBLE_STATUSES = {
-            "dispatched_lab", "dispatched_both",
-        }
-        stmt = stmt.where(
-            LabOrder.visit_id.in_(
-                select(Visit.id).where(Visit.status.in_(_LAB_VISIBLE_STATUSES))
-            )
-        )
+        stmt = stmt.where(LabOrder.status.notin_(["resulted", "rejected"]))
 
     rows = (await session.execute(stmt)).scalars().all()
     return [await _enrich_order(o, session) for o in rows]
@@ -347,7 +341,7 @@ async def _enrich_order(order: LabOrder, session) -> LabOrderRead:
     visit = await session.get(Visit, order.visit_id)
     if visit:
         patient = await session.get(Patient, visit.patient_id)
-        doctor = await session.get(Doctor, visit.doctor_id)
+        doctor = await session.get(Doctor, visit.doctor_id) if visit.doctor_id else None
         if patient:
             item.patient_name = f"{patient.first_name} {patient.last_name}"
         if doctor:

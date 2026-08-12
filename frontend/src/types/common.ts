@@ -55,6 +55,7 @@ export interface Patient {
   first_name: string
   last_name: string
   dob?: string
+  age?: number
   gender: Gender
   phone: string
   email?: string
@@ -62,6 +63,11 @@ export interface Patient {
   blood_group?: string
   insurance_provider?: string
   insurance_id?: string
+  aadhar_number?: string
+  emergency_contact_name?: string
+  emergency_contact_phone?: string
+  emergency_contact_relation?: string
+  is_active: boolean
 }
 
 export interface Doctor {

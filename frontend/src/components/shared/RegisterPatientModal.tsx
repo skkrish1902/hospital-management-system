@@ -1,8 +1,9 @@
+import { useState } from 'react'
 import { useQueryClient, useMutation } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { patientService, type PatientCreate } from '@/services/patientService'
+import { patientService, type PatientCreate, type PatientDuplicateCandidate } from '@/services/patientService'
 import type { Patient } from '@/types/common'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -40,6 +41,9 @@ const patientSchema = z.object({
   aadhar_number: z.string()
     .transform(v => v.replace(/-/g, ''))
     .pipe(z.string().length(12, 'Aadhar must be exactly 12 digits').regex(/^\d{12}$/, 'Only digits are allowed')),
+  emergency_contact_name: z.string().optional(),
+  emergency_contact_phone: z.string().optional(),
+  emergency_contact_relation: z.string().optional(),
 })
 
 type FormValues = z.infer<typeof patientSchema>
@@ -72,12 +76,20 @@ export function RegisterPatientModal({
   prefillPhone?: string
 }) {
   const qc = useQueryClient()
+  const [duplicates, setDuplicates] = useState<PatientDuplicateCandidate[] | null>(null)
+  const [pendingValues, setPendingValues] = useState<PatientCreate | null>(null)
 
   const { mutate, isPending, error: createError } = useMutation({
     mutationFn: (data: PatientCreate) => patientService.create(data),
     onSuccess: (patient) => {
       qc.invalidateQueries({ queryKey: ['patients'] })
       onSuccess(patient)
+    },
+    onError: (err) => {
+      const detail = (err as { response?: { status?: number; data?: { detail?: { duplicates?: PatientDuplicateCandidate[] } } } })?.response
+      if (detail?.status === 409 && detail.data?.detail?.duplicates) {
+        setDuplicates(detail.data.detail.duplicates)
+      }
     },
   })
 
@@ -97,12 +109,21 @@ export function RegisterPatientModal({
   const todayStr = new Date().toISOString().split('T')[0]
 
   const onSubmit = (values: FormValues) => {
-    mutate({
+    const data: PatientCreate = {
       ...values,
       email: values.email || undefined,
       dob: values.dob || undefined,
       age: calculatedAge ?? undefined,
-    })
+    }
+    setPendingValues(data)
+    setDuplicates(null)
+    mutate(data)
+  }
+
+  const confirmOverride = () => {
+    if (!pendingValues) return
+    setDuplicates(null)
+    mutate({ ...pendingValues, override_duplicate: true })
   }
 
   return (
@@ -124,9 +145,45 @@ export function RegisterPatientModal({
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-4">
-          {createError && (
+          {createError && !duplicates && (
             <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
               Registration failed. Please try again.
+            </div>
+          )}
+
+          {duplicates && duplicates.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 space-y-3">
+              <p className="text-sm font-medium text-amber-800">
+                Possible duplicate patient{duplicates.length > 1 ? 's' : ''} found
+              </p>
+              <ul className="space-y-1.5">
+                {duplicates.map(d => (
+                  <li key={d.id} className="text-xs text-amber-800 bg-white rounded-lg border border-amber-100 px-3 py-2">
+                    <span className="font-medium">{d.first_name} {d.last_name}</span>
+                    <span className="ml-2 font-mono text-amber-600">{d.uhid}</span>
+                    <span className="block text-amber-500 mt-0.5">
+                      Matched on: {d.matched_on.join(', ')} · {d.phone}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setDuplicates(null)}
+                  className="flex-1 border border-amber-300 text-amber-700 py-2 rounded-lg text-xs font-medium hover:bg-amber-100"
+                >
+                  Cancel — I'll search instead
+                </button>
+                <button
+                  type="button"
+                  disabled={isPending}
+                  onClick={confirmOverride}
+                  className="flex-1 bg-amber-600 text-white py-2 rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-60"
+                >
+                  {isPending ? 'Registering…' : 'Register anyway'}
+                </button>
+              </div>
             </div>
           )}
 
@@ -211,6 +268,21 @@ export function RegisterPatientModal({
             <Field label="Insurance ID" error={errors.insurance_id?.message}>
               <input {...register('insurance_id')} className={inputCls(false)} placeholder="Policy number" />
             </Field>
+          </div>
+
+          <div className="pt-1">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Emergency Contact</p>
+            <div className="grid grid-cols-3 gap-4">
+              <Field label="Name" error={errors.emergency_contact_name?.message}>
+                <input {...register('emergency_contact_name')} className={inputCls(false)} placeholder="Contact name" />
+              </Field>
+              <Field label="Phone" error={errors.emergency_contact_phone?.message}>
+                <input {...register('emergency_contact_phone')} type="tel" className={inputCls(false)} placeholder="10-digit mobile" />
+              </Field>
+              <Field label="Relation" error={errors.emergency_contact_relation?.message}>
+                <input {...register('emergency_contact_relation')} className={inputCls(false)} placeholder="e.g. Spouse" />
+              </Field>
+            </div>
           </div>
 
           <div className="flex gap-3 pt-2">

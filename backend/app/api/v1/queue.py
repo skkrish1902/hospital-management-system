@@ -24,8 +24,9 @@ from app.models.tenant.doctor import Doctor
 from app.models.tenant.invoice import Invoice
 from app.models.tenant.patient import Patient
 from app.models.tenant.queue_token import QueueToken
-from app.models.tenant.visit import Visit
+from app.models.tenant.visit import Visit, VisitStatus
 from app.schemas.queue import CancelTokenRequest, QueueTokenCreate, QueueTokenRead, QueueTokenStatusUpdate, QueueTokenUpdate
+from app.services.visit_workflow import VisitTransitionSource, VisitWorkflowService
 from app.websocket.manager import ws_manager
 
 router = APIRouter(dependencies=[Depends(require_feature("opd_queue"))])
@@ -84,9 +85,7 @@ async def issue_token(
     consultation_fee = float(doctor.consultation_fee) if doctor and doctor.consultation_fee else 0.0
     needs_payment = consultation_fee > 0 and not payload.waive_fee
 
-    visit_status = "pre_billing" if needs_payment else "registered"
-
-    # Auto-create Visit immediately on token issuance
+    # Canonical OPD lifecycle — not billing state.
     visit = Visit(
         id=uuid.uuid4(),
         patient_id=payload.patient_id,
@@ -94,7 +93,7 @@ async def issue_token(
         doctor_id=payload.doctor_id,
         appointment_id=payload.appointment_id,
         department_id=payload.department_id,
-        status=visit_status,
+        status=VisitStatus.REGISTERED.value,
     )
     session.add(visit)
     # Flush visit so its PK exists in the DB before invoice FK references it
@@ -102,6 +101,15 @@ async def issue_token(
 
     # Persist visit_id on the token so list queries can surface payment status
     token.visit_id = visit.id
+
+    # Reception hands off to the nurse queue; must not skip ahead to doctor consultation.
+    await VisitWorkflowService.transition(
+        session,
+        visit,
+        VisitStatus.WAITING_FOR_NURSE,
+        current_user.get("sub"),
+        VisitTransitionSource.RECEPTION,
+    )
 
     # Auto-create Invoice with consultation fee line item
     invoice = None
@@ -313,20 +321,36 @@ async def cancel_token(
     token.notes = payload.notes.strip()
     token.cancelled_at = now
 
-    # Cancel the associated Visit (registered status only — not yet seen by nurse/doctor)
-    visit_stmt = select(Visit).where(
-        Visit.patient_id == token.patient_id,
-        Visit.status == "registered",
-    )
-    if token.appointment_id:
-        visit_stmt = visit_stmt.where(Visit.appointment_id == token.appointment_id)
-    elif token.department_id:
-        visit_stmt = visit_stmt.where(Visit.department_id == token.department_id)
-    visit_result = await session.execute(visit_stmt)
-    visit = visit_result.scalars().first()
+    # Cancel the associated Visit only while it is still in the early OPD flow.
+    _CANCELLABLE = (VisitStatus.REGISTERED.value, VisitStatus.WAITING_FOR_NURSE.value, VisitStatus.IN_PRE_VITAL.value)
+    visit = None
+    if token.visit_id:
+        visit = await session.get(Visit, token.visit_id)
+        if visit and visit.status not in _CANCELLABLE:
+            visit = None
+    if not visit:
+        # Legacy fallback for tokens issued before visit_id linkage existed.
+        visit_stmt = select(Visit).where(
+            Visit.patient_id == token.patient_id,
+            Visit.status.in_(_CANCELLABLE),
+        )
+        if token.appointment_id:
+            visit_stmt = visit_stmt.where(Visit.appointment_id == token.appointment_id)
+        elif token.department_id:
+            visit_stmt = visit_stmt.where(Visit.department_id == token.department_id)
+        visit_result = await session.execute(visit_stmt)
+        visit = visit_result.scalars().first()
     if visit:
-        visit.status = "cancelled"
-        visit.closed_at = now
+        try:
+            visit = await VisitWorkflowService.transition(
+                session,
+                visit,
+                VisitStatus.CANCELLED,
+                current_user.get("sub"),
+                VisitTransitionSource.CANCELLED,
+            )
+        except ValueError:
+            visit.closed_at = now
 
     await session.commit()
     await session.refresh(token)

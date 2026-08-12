@@ -114,7 +114,7 @@ async def get_admin_stats(
 
     visits_completed_today = (await session.execute(
         select(func.count()).select_from(Visit)
-        .where(Visit.created_at >= today_start, Visit.status == "closed")
+        .where(Visit.created_at >= today_start, Visit.status == VisitStatus.CLOSED.value)
     )).scalar() or 0
 
     visits_in_progress_today = visits_today - visits_completed_today
@@ -141,7 +141,7 @@ async def get_admin_stats(
             Department.name,
             func.count(Visit.id).label("total"),
             func.count(
-                case((Visit.status == "closed", Visit.id))
+                case((Visit.status == VisitStatus.CLOSED.value, Visit.id))
             ).label("completed"),
         )
         .outerjoin(Visit, Visit.department_id == Department.id)

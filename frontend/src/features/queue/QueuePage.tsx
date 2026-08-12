@@ -1,10 +1,11 @@
-import { useState, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useCallback, useEffect } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { queueService } from '@/services/queueService'
 import { patientService } from '@/services/patientService'
 import { departmentService, doctorService, billingService } from '@/services/clinicalService'
+import { RegisterPatientModal } from '@/components/shared/RegisterPatientModal'
 import type { Doctor, Patient, QueueToken, Invoice } from '@/types/common'
 
 const PRIORITY_BADGE: Record<string, string> = {
@@ -20,6 +21,7 @@ const STATUS_BADGE: Record<string, string> = {
 }
 
 export default function QueuePage() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [issueForm, setIssueForm] = useState(false)
   const [issueStep, setIssueStep] = useState<'form' | 'confirm'>('form')
   const [patientSearch, setPatientSearch] = useState('')
@@ -38,6 +40,8 @@ export default function QueuePage() {
   const [editDeptId, setEditDeptId] = useState<string>('')
   const [editDoctorId, setEditDoctorId] = useState<string>('')
   const [editPriority, setEditPriority] = useState<string>('')
+
+  const [showRegisterModal, setShowRegisterModal] = useState(false)
 
   // Cancel modal
   const [cancelToken, setCancelToken] = useState<QueueToken | null>(null)
@@ -91,6 +95,17 @@ export default function QueuePage() {
     refetch()
     qc.invalidateQueries({ queryKey: ['invoice-by-visit'] })
   }, [refetch, qc]))
+
+  // Arriving from Register Visit → Walk-In opens the issue form directly.
+  useEffect(() => {
+    if (searchParams.get('action') === 'issue') {
+      setIssueForm(true)
+      const next = new URLSearchParams(searchParams)
+      next.delete('action')
+      setSearchParams(next, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const closeIssue = () => {
     setIssueForm(false)
@@ -468,6 +483,19 @@ export default function QueuePage() {
                 </div>
               )}
 
+              {patientSearch.length >= 2 && patients.length === 0 && !selectedPatient && (
+                <p className="text-xs text-gray-500">
+                  No patients found.{' '}
+                  <button
+                    type="button"
+                    onClick={() => setShowRegisterModal(true)}
+                    className="text-primary font-medium underline hover:text-primary/80"
+                  >
+                    Click here to register a new patient
+                  </button>
+                </p>
+              )}
+
               {selectedPatient && (
                 <div className="bg-blue-50 rounded-lg px-3 py-2 text-sm flex items-center justify-between">
                   <span>
@@ -801,6 +829,18 @@ export default function QueuePage() {
             )}
           </div>
         </div>
+      )}
+
+      {showRegisterModal && (
+        <RegisterPatientModal
+          onClose={() => setShowRegisterModal(false)}
+          prefillPhone={/^\d/.test(patientSearch) ? patientSearch.replace(/\D/g, '').slice(0, 15) : undefined}
+          onSuccess={patient => {
+            setSelectedPatient(patient)
+            setPatientSearch('')
+            setShowRegisterModal(false)
+          }}
+        />
       )}
     </div>
   )

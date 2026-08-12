@@ -103,6 +103,8 @@ async def onboard_doctor(
             )
         # Resume: attach the doctor profile to the existing user account.
         existing_user.hashed_password = hash_password(temp_password)
+        existing_user.must_change_password = True
+        existing_user.password_changed_at = None
         new_user = existing_user
         username = existing_user.username
     else:
@@ -127,6 +129,8 @@ async def onboard_doctor(
             hashed_password=hash_password(temp_password),
             full_name=payload.full_name,
             role="doctor",
+            must_change_password=True,
+            password_changed_at=None,
         )
         session.add(new_user)
         await session.flush()  # get new_user.id

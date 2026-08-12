@@ -10,9 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import require_role, require_feature
 from app.db.engine import get_session
 from app.models.tenant.patient import Patient
-from app.models.tenant.visit import Visit
+from app.models.tenant.visit import Visit, VisitStatus
 from app.models.tenant.vitals import Vitals
 from app.schemas.vitals import VitalsCreate, VitalsRead
+from app.services.visit_workflow import VisitTransitionSource, VisitWorkflowService
 from app.websocket.manager import ws_manager
 
 router = APIRouter(dependencies=[Depends(require_feature("vitals"))])
@@ -45,9 +46,18 @@ async def record_vitals(
     )
     session.add(vitals)
 
-    # Advance directly to vitals_done — automatically sends patient to doctor queue
-    if visit.status == "registered":
-        visit.status = "vitals_done"
+    # Canonical OPD state progresses to the post-vitals doctor queue.
+    if visit.status == VisitStatus.REGISTERED.value:
+        try:
+            await VisitWorkflowService.transition(
+                session,
+                visit,
+                VisitStatus.WAITING_FOR_DOCTOR,
+                current_user.get("sub"),
+                VisitTransitionSource.NURSE,
+            )
+        except ValueError:
+            pass
 
     await session.commit()
     await session.refresh(vitals)

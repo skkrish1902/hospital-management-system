@@ -145,6 +145,8 @@ async def create_user(
         hashed_password=hash_password(temp_password),
         full_name=payload.full_name,
         role=payload.role,
+        must_change_password=True,
+        password_changed_at=None,
     )
     session.add(new_user)
     await session.commit()
@@ -224,6 +226,8 @@ async def reset_user_password(
 
     new_password = "Password@123"
     user.hashed_password = hash_password(new_password)
+    user.must_change_password = True
+    user.password_changed_at = None
     await session.commit()
 
     send_staff_credentials(

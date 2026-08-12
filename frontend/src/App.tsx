@@ -15,6 +15,7 @@ import PosScreen from '@/features/billing/PosScreen'
 import DoctorsAdminPage from '@/features/admin/DoctorsAdminPage'
 import UsersAdminPage from '@/features/admin/UsersAdminPage'
 import AppointmentsPage from '@/features/appointments/AppointmentsPage'
+import RegisterVisitPage from '@/features/reception/RegisterVisitPage'
 import ChangePasswordPage from '@/features/auth/ChangePasswordPage'
 import PharmacyPage from '@/features/pharmacy/PharmacyPage'
 import LabPage from '@/features/lab/LabPage'
@@ -100,6 +101,7 @@ export default function App() {
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/patients" element={<RoleGuard allowed={CLINICAL}><PatientsPage /></RoleGuard>} />
+            <Route path="/register-visit" element={<RoleGuard allowed={RECEPTION}><RegisterVisitPage /></RoleGuard>} />
             <Route path="/appointments" element={<FeatureGuard feature="appointments"><RoleGuard allowed={[...RECEPTION, 'nurse', 'doctor']}><AppointmentsPage /></RoleGuard></FeatureGuard>} />
             <Route path="/queue" element={<FeatureGuard feature="opd_queue"><RoleGuard allowed={[...RECEPTION, 'nurse']}><QueuePage /></RoleGuard></FeatureGuard>} />
             <Route path="/nurse/vitals" element={<FeatureGuard feature="vitals"><RoleGuard allowed={NURSE}><NurseVitalsPage /></RoleGuard></FeatureGuard>} />

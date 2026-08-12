@@ -20,7 +20,7 @@ from app.models.tenant.doctor import Doctor
 from app.models.tenant.invoice import Invoice
 from app.models.tenant.patient import Patient
 from app.models.tenant.queue_token import QueueToken
-from app.models.tenant.visit import Visit
+from app.models.tenant.visit import Visit, VisitStatus
 from app.schemas.appointment import (
     AppointmentCreate,
     AppointmentRead,
@@ -33,6 +33,7 @@ from app.schemas.appointment import (
 from app.core.razorpay_service import create_razorpay_order
 from app.core.sms import send_appointment_confirmation
 from app.models.public.user import Tenant
+from app.services.visit_workflow import VisitTransitionSource, VisitWorkflowService
 from app.websocket.manager import ws_manager
 
 router = APIRouter(dependencies=[Depends(require_feature("appointments"))])
@@ -327,7 +328,7 @@ async def checkin_appointment(
         select(Visit).where(
             and_(
                 Visit.appointment_id == appt_id,
-                Visit.status != "closed",
+                Visit.status != VisitStatus.CLOSED.value,
             )
         )
     )).scalar_one_or_none()
@@ -362,9 +363,8 @@ async def checkin_appointment(
     # Determine whether consultation fee applies
     consultation_fee = float(doctor.consultation_fee) if doctor and doctor.consultation_fee else 0.0
     needs_payment = consultation_fee > 0 and not body.waive_fee
-    visit_status = "pre_billing" if needs_payment else "registered"
 
-    # Create Visit
+    # Create Visit in the canonical OPD lifecycle; billing remains a separate downstream concern.
     visit = Visit(
         id=uuid.uuid4(),
         patient_id=appt.patient_id,
@@ -372,10 +372,19 @@ async def checkin_appointment(
         doctor_id=appt.doctor_id,
         appointment_id=appt_id,
         department_id=department_id,
-        status=visit_status,
+        status=VisitStatus.REGISTERED.value,
     )
     session.add(visit)
     await session.flush()  # ensure visit.id exists before invoice FK
+
+    # Reception hands off to the nurse queue; must not skip ahead to doctor consultation.
+    await VisitWorkflowService.transition(
+        session,
+        visit,
+        VisitStatus.WAITING_FOR_NURSE,
+        current_user.get("sub"),
+        VisitTransitionSource.RECEPTION,
+    )
 
     # Create Invoice (draft) if fee applies, or ₹0 paid record if waived
     invoice = None

@@ -25,4 +25,7 @@ class Patient(Base, TimestampMixin):
     insurance_provider: Mapped[Optional[str]] = mapped_column(String(255))
     insurance_id: Mapped[Optional[str]] = mapped_column(String(100))
     aadhar_number: Mapped[Optional[str]] = mapped_column(String(12))
+    emergency_contact_name: Mapped[Optional[str]] = mapped_column(String(200))
+    emergency_contact_phone: Mapped[Optional[str]] = mapped_column(String(15))
+    emergency_contact_relation: Mapped[Optional[str]] = mapped_column(String(50))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

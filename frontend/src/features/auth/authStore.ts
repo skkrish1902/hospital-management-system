@@ -8,6 +8,7 @@ interface AuthUser {
   role: string
   tenantSchema: string
   hospitalName: string
+  mustChangePassword: boolean
 }
 
 interface AuthState {
@@ -69,6 +70,7 @@ export const useAuthStore = create<AuthState>()(
             role: (payload.role as string) ?? '',
             tenantSchema: (payload.tenant_schema as string) ?? '',
             hospitalName: (payload.hospital_name as string) ?? '',
+            mustChangePassword: Boolean(payload.must_change_password),
           },
         })
       },

@@ -33,6 +33,16 @@ const NAV_ITEMS: NavItem[] = [
     roles: ['receptionist', 'hospital_admin'],
   },
   {
+    label: 'Register Visit',
+    to: '/register-visit',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 4v16m8-8H4" />
+      </svg>
+    ),
+    roles: ['receptionist', 'hospital_admin'],
+  },
+  {
     label: 'Appointments',
     to: '/appointments',
     icon: (

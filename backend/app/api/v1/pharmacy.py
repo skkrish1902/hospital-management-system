@@ -25,9 +25,10 @@ from app.models.tenant.lab_order import LabOrder
 from app.models.tenant.patient import Patient
 from app.models.tenant.pharmacy_queue import PharmacyQueue
 from app.models.tenant.prescription import Prescription
-from app.models.tenant.visit import Visit
+from app.models.tenant.visit import Visit, VisitStatus
 from app.schemas.invoice import InvoiceRead, PharmacyBillCreate
 from app.schemas.pharmacy import PharmacyQueueRead, PharmacyStatusUpdate
+from app.services.visit_workflow import VisitTransitionSource, VisitWorkflowService
 from app.websocket.manager import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -83,8 +84,17 @@ async def update_pharmacy_status(
         rx = await session.get(Prescription, pq.prescription_id)
         if rx:
             visit = await session.get(Visit, rx.visit_id)
-            if visit and visit.status == "dispatched_pharmacy":
-                visit.status = "billing_pending"
+            if visit and visit.status == VisitStatus.CONSULTATION_COMPLETED.value:
+                try:
+                    await VisitWorkflowService.transition(
+                        session,
+                        visit,
+                        VisitStatus.CLOSED,
+                        current_user.get("sub"),
+                        VisitTransitionSource.SYSTEM,
+                    )
+                except ValueError:
+                    pass
 
     await session.commit()
     await session.refresh(pq)
@@ -263,8 +273,6 @@ async def bill_pharmacy_dispense(
         )
         # advance queue to dispensed
         pq.status = "dispensed"
-        if visit.status == "dispatched_pharmacy":
-            visit.status = "billing_pending"
         await session.commit()
         await session.refresh(invoice)
         await ws_manager.broadcast(tenant, "pharmacy:update", {
@@ -432,12 +440,8 @@ async def verify_pharmacy_payment(
     invoice.paid_at = datetime.now(timezone.utc)
     pq.status = "dispensed"
 
-    # Advance visit to billing_pending
+    # Pharmacy queue is treated as a domain-specific workflow, not a visit-state mutation.
     rx = await session.get(Prescription, pq.prescription_id)
-    if rx:
-        visit = await session.get(Visit, rx.visit_id)
-        if visit and visit.status == "dispatched_pharmacy":
-            visit.status = "billing_pending"
 
     await session.commit()
     await session.refresh(invoice)

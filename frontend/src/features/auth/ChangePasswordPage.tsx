@@ -7,6 +7,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useNavigate } from 'react-router-dom'
 import apiClient from '@/services/apiClient'
+import { useAuthStore } from '@/features/auth/authStore'
 
 const schema = z
   .object({
@@ -39,10 +40,11 @@ export default function ChangePasswordPage() {
   const onSubmit = async (data: FormValues) => {
     setServerError(null)
     try {
-      await apiClient.post('/auth/change-password', {
+      const res = await apiClient.post<{ access_token: string; refresh_token: string; must_change_password: boolean }>('/auth/change-password', {
         current_password: data.current_password,
         new_password: data.new_password,
       })
+      useAuthStore.getState().setTokens(res.data.access_token, res.data.refresh_token)
       setSuccess(true)
       reset()
     } catch (err: unknown) {
@@ -94,10 +96,14 @@ export default function ChangePasswordPage() {
                     Change Again
                   </button>
                   <button
-                    onClick={() => navigate(-1)}
+                    onClick={() => {
+                      const role = useAuthStore.getState().user?.role ?? ''
+                      const target = role === 'doctor' ? '/doctor/consultation' : role === 'nurse' ? '/nurse/vitals' : role === 'pharmacist' ? '/pharmacy' : role === 'lab_technician' ? '/lab' : '/dashboard'
+                      navigate(target, { replace: true })
+                    }}
                     className="flex-1 px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary/90"
                   >
-                    Go Back
+                    Continue
                   </button>
                 </div>
               </div>

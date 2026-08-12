@@ -1,15 +1,19 @@
-import { Navigate, Outlet } from 'react-router-dom'
+import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/features/auth/authStore'
 
 export default function ProtectedRoute() {
-  // Subscribe to accessToken directly so this component re-renders whenever
-  // auth state changes (logout, session expiry). Selecting the `isAuthenticated`
-  // function itself returns a stable reference and would never trigger a re-render.
+  const location = useLocation()
   const accessToken = useAuthStore((s) => s.accessToken)
+  const mustChangePassword = useAuthStore((s) => s.user?.mustChangePassword ?? false)
   const isAuthenticated = useAuthStore.getState().isAuthenticated
 
   if (!accessToken || !isAuthenticated()) {
     return <Navigate to="/login" replace />
   }
+
+  if (mustChangePassword && location.pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />
+  }
+
   return <Outlet />
 }

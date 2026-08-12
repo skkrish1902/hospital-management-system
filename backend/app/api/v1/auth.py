@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
@@ -9,7 +11,7 @@ from app.core.security import verify_password, hash_password, create_access_toke
 from app.core.redis_client import block_token, is_token_blocked, set_cached_features, get_tenant_forced_logout_time
 from app.models.public.user import User, Tenant
 from app.models.public.tenant_feature import TenantFeature
-from app.schemas.auth import LoginRequest, TokenResponse, RefreshRequest
+from app.schemas.auth import LoginRequest, TokenResponse, RefreshRequest, ChangePasswordRequest
 
 router = APIRouter()
 
@@ -54,6 +56,7 @@ async def login(payload: LoginRequest, session: AsyncSession = Depends(get_sessi
             "hospital_name": "",
             "full_name": user.full_name,
             "features": [],
+            "must_change_password": False,
         }
     else:
         # Fetch the hospital tenant and enforce it must be active.
@@ -73,12 +76,17 @@ async def login(payload: LoginRequest, session: AsyncSession = Depends(get_sessi
             "hospital_name": tenant.hospital_name,
             "full_name": user.full_name,
             "features": await _load_enabled_features(user.tenant_id, session),
+            "must_change_password": bool(user.must_change_password),
         }
 
     access_token = create_access_token(subject=str(user.id), extra_claims=extra_claims)
     refresh_token = create_refresh_token(subject=str(user.id))
 
-    return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        must_change_password=bool(user.must_change_password) if user.role != "super_admin" else False,
+    )
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -121,6 +129,7 @@ async def refresh(payload: RefreshRequest, session: AsyncSession = Depends(get_s
             "hospital_name": "",
             "full_name": user.full_name,
             "features": [],
+            "must_change_password": False,
         }
     else:
         tenant_result = await session.execute(select(Tenant).where(Tenant.id == user.tenant_id))
@@ -134,11 +143,16 @@ async def refresh(payload: RefreshRequest, session: AsyncSession = Depends(get_s
             "hospital_name": tenant.hospital_name,
             "full_name": user.full_name,
             "features": await _load_enabled_features(user.tenant_id, session),
+            "must_change_password": bool(user.must_change_password),
         }
 
     access_token = create_access_token(subject=str(user.id), extra_claims=extra_claims)
     new_refresh = create_refresh_token(subject=str(user.id))
-    return TokenResponse(access_token=access_token, refresh_token=new_refresh)
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=new_refresh,
+        must_change_password=bool(user.must_change_password) if user.role != "super_admin" else False,
+    )
 
 
 class LogoutRequest(BaseModel):
@@ -168,18 +182,13 @@ async def logout(payload: LogoutRequest):
             await block_token(jti, remaining)
 
 
-class ChangePasswordRequest(BaseModel):
-    current_password: str = Field(..., min_length=1)
-    new_password: str = Field(..., min_length=8, description="Minimum 8 characters")
-
-
-@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/change-password", response_model=TokenResponse)
 async def change_password(
     payload: ChangePasswordRequest,
     session: AsyncSession = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """Allow any authenticated user to change their own password."""
+    """Allow any authenticated user to change their own password and return refreshed tokens."""
     user_id: str = current_user.get("sub")
     user = (await session.execute(
         select(User).where(User.id == user_id, User.is_active == True)  # noqa: E712
@@ -188,5 +197,35 @@ async def change_password(
         raise HTTPException(status_code=404, detail="User not found")
     if not verify_password(payload.current_password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
+
     user.hashed_password = hash_password(payload.new_password)
+    user.must_change_password = False
+    user.password_changed_at = datetime.now(timezone.utc)
     await session.commit()
+
+    if user.role == "super_admin":
+        extra_claims = {
+            "role": "super_admin",
+            "tenant_schema": "",
+            "hospital_name": "",
+            "full_name": user.full_name,
+            "features": [],
+            "must_change_password": False,
+        }
+    else:
+        tenant = (await session.execute(select(Tenant).where(Tenant.id == user.tenant_id))).scalar_one_or_none()
+        if not tenant or not tenant.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Hospital account is inactive")
+        extra_claims = {
+            "role": user.role,
+            "tenant_id": str(user.tenant_id),
+            "tenant_schema": tenant.schema_name,
+            "hospital_name": tenant.hospital_name,
+            "full_name": user.full_name,
+            "features": await _load_enabled_features(user.tenant_id, session),
+            "must_change_password": False,
+        }
+
+    access_token = create_access_token(subject=str(user.id), extra_claims=extra_claims)
+    refresh_token = create_refresh_token(subject=str(user.id))
+    return TokenResponse(access_token=access_token, refresh_token=refresh_token, must_change_password=False)

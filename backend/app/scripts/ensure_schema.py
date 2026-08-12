@@ -82,6 +82,9 @@ TENANT_COLUMNS: dict = {
         ("blood_group",    "VARCHAR(10)"),
         ("insurance_provider", "VARCHAR(255)"),
         ("insurance_id",   "VARCHAR(255)"),
+        ("emergency_contact_name",     "VARCHAR(200)"),
+        ("emergency_contact_phone",    "VARCHAR(15)"),
+        ("emergency_contact_relation", "VARCHAR(50)"),
     ],
     "doctors": [
         ("full_name",        "VARCHAR(255)"),

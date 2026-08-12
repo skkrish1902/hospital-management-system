@@ -114,6 +114,33 @@ async def init_db() -> None:
                 END $$;
             """))
 
+            # Add password-change enforcement columns if they don't exist yet.
+            # New users must be forced to change their password on first login. Existing
+            # production users should be initialized to false to avoid locking everyone out
+            # until an explicit admin reset or password-change event occurs.
+            await conn.execute(text("""
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name   = 'users'
+                          AND column_name  = 'must_change_password'
+                    ) THEN
+                        ALTER TABLE public.users ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT TRUE;
+                        UPDATE public.users SET must_change_password = FALSE;
+                    END IF;
+
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name   = 'users'
+                          AND column_name  = 'password_changed_at'
+                    ) THEN
+                        ALTER TABLE public.users ADD COLUMN password_changed_at TIMESTAMP NULL;
+                    END IF;
+                END $$;
+            """))
+
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """

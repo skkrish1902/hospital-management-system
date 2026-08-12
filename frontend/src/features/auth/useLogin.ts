@@ -12,6 +12,7 @@ interface TokenResponse {
   access_token: string
   refresh_token: string
   token_type: string
+  must_change_password: boolean
 }
 
 function homeForRole(role: string): string {
@@ -31,8 +32,12 @@ export function useLogin() {
       apiClient.post<TokenResponse>('/auth/login', payload).then((r) => r.data),
     onSuccess: (data) => {
       setTokens(data.access_token, data.refresh_token)
-      // user is populated synchronously by setTokens via JWT parse
-      const role = useAuthStore.getState().user?.role ?? ''
+      const user = useAuthStore.getState().user
+      if (user?.mustChangePassword) {
+        navigate('/change-password', { replace: true })
+        return
+      }
+      const role = user?.role ?? ''
       navigate(homeForRole(role), { replace: true })
     },
   })

@@ -12,8 +12,9 @@ from app.db.engine import get_session
 from app.models.tenant.lab_order import LabOrder
 from app.models.tenant.patient import Patient
 from app.models.tenant.prescription import Prescription
-from app.models.tenant.visit import Visit
+from app.models.tenant.visit import Visit, VisitStatus
 from app.schemas.prescription import PrescriptionCreate, PrescriptionRead, PrescriptionUpdate
+from app.services.visit_workflow import VisitTransitionSource, VisitWorkflowService
 from app.websocket.manager import ws_manager
 
 router = APIRouter()
@@ -73,9 +74,18 @@ async def create_prescription(
             )
             session.add(lab_order)
 
-    # Advance visit status after prescription is written
-    if visit.status == "in_consultation":
-        visit.status = "prescription_done"
+    # Prescription sign-off closes the doctor workflow stage.
+    if visit.status == VisitStatus.IN_CONSULTATION.value:
+        try:
+            await VisitWorkflowService.transition(
+                session,
+                visit,
+                VisitStatus.CONSULTATION_COMPLETED,
+                current_user.get("sub"),
+                VisitTransitionSource.DOCTOR,
+            )
+        except ValueError:
+            pass
 
     await session.commit()
     await session.refresh(prescription)

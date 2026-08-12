@@ -12,8 +12,9 @@ from app.core.dependencies import require_role
 from app.db.engine import get_session
 from app.models.tenant.consultation import Consultation
 from app.models.tenant.patient import Patient
-from app.models.tenant.visit import Visit
+from app.models.tenant.visit import Visit, VisitStatus
 from app.schemas.consultation import ConsultationCreate, ConsultationRead, ConsultationUpdate
+from app.services.visit_workflow import VisitTransitionSource, VisitWorkflowService
 from app.websocket.manager import ws_manager
 
 router = APIRouter()
@@ -63,9 +64,18 @@ async def create_consultation(
     consult = Consultation(id=uuid.uuid4(), uhid=patient.uhid if patient else None, **data)
     session.add(consult)
 
-    # Advance visit status
-    if visit.status == "vitals_done":
-        visit.status = "in_consultation"
+    # OPD consultation starts only from the doctor-ready state
+    if visit.status == VisitStatus.WAITING_FOR_DOCTOR.value:
+        try:
+            await VisitWorkflowService.transition(
+                session,
+                visit,
+                VisitStatus.IN_CONSULTATION,
+                current_user.get("sub"),
+                VisitTransitionSource.DOCTOR,
+            )
+        except ValueError:
+            pass
 
     await session.commit()
     await session.refresh(consult)

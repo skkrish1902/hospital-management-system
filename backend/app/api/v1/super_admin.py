@@ -445,6 +445,8 @@ async def create_tenant(
         hashed_password=hash_password(default_password),
         full_name="Hospital Admin",
         role="hospital_admin",
+        must_change_password=True,
+        password_changed_at=None,
     )
     session.add(admin)
     await session.commit()

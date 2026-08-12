@@ -18,6 +18,11 @@ class PatientCreate(BaseModel):
     insurance_provider: Optional[str] = None
     insurance_id: Optional[str] = None
     aadhar_number: str  # exactly 12 digits, required
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
+    emergency_contact_relation: Optional[str] = None
+    # Set true to proceed after a duplicate warning has been shown to the user.
+    override_duplicate: bool = False
 
 
 class PatientRead(BaseModel):
@@ -35,6 +40,9 @@ class PatientRead(BaseModel):
     insurance_provider: Optional[str] = None
     insurance_id: Optional[str] = None
     aadhar_number: Optional[str] = None
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
+    emergency_contact_relation: Optional[str] = None
     is_active: bool
 
     model_config = {"from_attributes": True}
@@ -53,6 +61,22 @@ class PatientUpdate(BaseModel):
     insurance_provider: Optional[str] = None
     insurance_id: Optional[str] = None
     aadhar_number: Optional[str] = None
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
+    emergency_contact_relation: Optional[str] = None
+
+
+class PatientDuplicateCandidate(BaseModel):
+    id: uuid.UUID
+    uhid: str
+    first_name: str
+    last_name: str
+    phone: str
+    dob: Optional[date] = None
+    aadhar_number: Optional[str] = None
+    matched_on: List[str]
+
+    model_config = {"from_attributes": True}
 
 
 # ── Patient History (for doctor consultation view) ──────────────────────────
