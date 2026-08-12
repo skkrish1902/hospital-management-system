@@ -1,0 +1,22 @@
+from typing import Optional
+import uuid
+from datetime import datetime
+
+from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base, TimestampMixin
+
+
+class Visit(Base, TimestampMixin):
+    __tablename__ = "visits"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    patient_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("patients.id"), nullable=False, index=True)
+    uhid: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    doctor_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("doctors.id"), nullable=True)
+    appointment_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("appointments.id"))
+    department_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("departments.id"), index=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="registered")
+    # status: pre_billing | registered | vitals_done | in_consultation | prescription_done | dispatched_pharmacy | dispatched_lab | billing_pending | closed | cancelled
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
