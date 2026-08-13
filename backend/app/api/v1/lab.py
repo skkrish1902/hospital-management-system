@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import require_role, require_feature
 from app.db.engine import get_session
 from app.models.tenant.doctor import Doctor
-from app.models.tenant.lab_order import LabOrder, LabResult
+from app.models.tenant.lab_order import LabOrder, LabResult, LAB_STATUS_TRANSITIONS, can_transition_lab_order
 from app.models.tenant.patient import Patient
 from app.models.tenant.visit import Visit
 from app.schemas.lab import LabOrderCreate, LabOrderRead, LabResultCreate, LabResultRead
@@ -21,6 +21,14 @@ from app.websocket.manager import ws_manager
 router = APIRouter(dependencies=[Depends(require_feature("lab"))])
 
 ALLOWED_MIME = {"application/pdf", "image/jpeg", "image/png", "image/jpg"}
+def validate_lab_transition(current_status: str, new_status: str) -> None:
+    if new_status not in LAB_STATUS_TRANSITIONS:
+        raise HTTPException(status_code=400, detail="Invalid lab order status")
+    if not can_transition_lab_order(current_status, new_status):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid lab order transition: {current_status} -> {new_status}",
+        )
 
 
 @router.post("", response_model=LabOrderRead, status_code=status.HTTP_201_CREATED)
@@ -69,7 +77,7 @@ async def list_lab_orders(
     # Lab technicians only need to act on orders not yet finalized.
     # LabOrder maintains its own status independent of the OPD visit lifecycle.
     if current_user.get("role") == "lab_technician":
-        stmt = stmt.where(LabOrder.status.notin_(["resulted", "rejected"]))
+        stmt = stmt.where(LabOrder.status.notin_(["resulted", "result_ready", "verified", "completed", "rejected"]))
 
     rows = (await session.execute(stmt)).scalars().all()
     return [await _enrich_order(o, session) for o in rows]
@@ -82,10 +90,15 @@ async def update_lab_order_status(
     session: AsyncSession = Depends(get_session),
     current_user: dict = Depends(require_role("nurse", "doctor", "lab_technician", "hospital_admin", "super_admin")),
 ):
-    """Advance lab order status: ordered → sample_collected → processing → resulted | rejected."""
+    """Advance a lab order through its independent lifecycle."""
     order = await session.get(LabOrder, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Lab order not found")
+    if new_status in ("verified", "completed") and current_user.get("role") not in (
+        "lab_technician", "hospital_admin", "super_admin"
+    ):
+        raise HTTPException(status_code=403, detail="Only lab staff can finalize lab results")
+    validate_lab_transition(order.status, new_status)
     order.status = new_status
     await session.commit()
     await session.refresh(order)
@@ -109,7 +122,7 @@ async def reject_lab_order(
     order = await session.get(LabOrder, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Lab order not found")
-    if order.status not in ("sample_collected", "processing"):
+    if order.status not in ("sample_pending", "sample_collected", "processing"):
         raise HTTPException(status_code=400, detail="Can only reject after sample collection")
     order.status = "rejected"
     await session.commit()
@@ -131,10 +144,12 @@ async def enter_lab_results(
     session: AsyncSession = Depends(get_session),
     current_user: dict = Depends(require_role("nurse", "doctor", "lab_technician", "hospital_admin", "super_admin")),
 ):
-    """Enter results for a lab order — advances order to 'resulted'."""
+    """Enter results for a processing lab order and mark it result-ready."""
     order = await session.get(LabOrder, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Lab order not found")
+    if order.status != "processing":
+        raise HTTPException(status_code=400, detail="Results can only be entered while processing")
 
     visit = await session.get(Visit, order.visit_id)
     patient = await session.get(Patient, visit.patient_id) if visit else None
@@ -147,7 +162,7 @@ async def enter_lab_results(
         reported_by_user_id=uuid.UUID(current_user["sub"]),
     )
     session.add(result)
-    order.status = "resulted"
+    order.status = "result_ready"
     await session.commit()
     await session.refresh(result)
 
@@ -162,6 +177,29 @@ async def enter_lab_results(
         "visit_id": str(order.visit_id),
     })
     return result
+
+
+@router.post("/{order_id}/verify", response_model=LabOrderRead)
+async def verify_lab_results(
+    order_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(require_role("lab_technician", "hospital_admin", "super_admin")),
+):
+    order = await session.get(LabOrder, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Lab order not found")
+    validate_lab_transition(order.status, "verified")
+    result = (await session.execute(
+        select(LabResult).where(LabResult.lab_order_id == order_id)
+    )).scalar_one_or_none()
+    if not result:
+        raise HTTPException(status_code=400, detail="No results available for verification")
+    result.verified_by_user_id = uuid.UUID(current_user["sub"])
+    result.verified_at = datetime.now(timezone.utc)
+    order.status = "verified"
+    await session.commit()
+    await session.refresh(order)
+    return await _enrich_order(order, session)
 
 
 @router.post("/{order_id}/results/upload", response_model=LabResultRead)

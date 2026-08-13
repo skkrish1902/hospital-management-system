@@ -42,5 +42,7 @@ class LabResultRead(BaseModel):
     report_url: Optional[str] = None
     reported_by_user_id: Optional[uuid.UUID] = None
     reported_at: datetime
+    verified_by_user_id: Optional[uuid.UUID] = None
+    verified_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}

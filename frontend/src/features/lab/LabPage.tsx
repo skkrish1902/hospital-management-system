@@ -1,7 +1,7 @@
 /**
  * Lab Orders Page — Lab Technician
  *
- * Flow: ordered → sample_collected → processing → resulted
+ * Flow: ordered → sample_pending → sample_collected → processing → result_ready → verified → completed
  * Features: per-test critical flags, normal ranges, PDF/image upload, sample rejection,
  *           doctor notification via WebSocket on results ready.
  */
@@ -12,15 +12,19 @@ import { useWebSocket } from '@/hooks/useWebSocket'
 import type { LabOrder } from '@/types/common'
 
 const STATUS_FLOW: Record<string, { next: string; label: string; color: string } | null> = {
-  ordered:          { next: 'sample_collected', label: 'Collect Sample',   color: 'blue' },
+  ordered:          { next: 'sample_pending',   label: 'Await Sample',     color: 'blue' },
+  sample_pending:   { next: 'sample_collected', label: 'Collect Sample',   color: 'blue' },
   sample_collected: { next: 'processing',        label: 'Start Processing', color: 'purple' },
-  processing:       { next: 'resulted',          label: 'Enter Results',    color: 'green' },
-  resulted:         null,
+  processing:       { next: 'result_ready',      label: 'Enter Results',    color: 'green' },
+  result_ready:     { next: 'verified',          label: 'Verify Results',   color: 'green' },
+  verified:         { next: 'completed',         label: 'Complete Order',   color: 'green' },
+  completed:        null,
   rejected:         null,
 }
 
 const STATUS_BADGE: Record<string, string> = {
   ordered:          'bg-gray-100 text-gray-600',
+  sample_pending:   'bg-gray-100 text-gray-600',
   sample_collected: 'bg-blue-100 text-blue-700',
   processing:       'bg-purple-100 text-purple-700',
   resulted:         'bg-green-100 text-green-700',
@@ -55,15 +59,16 @@ export default function LabPage() {
 
   const { mutate: advance } = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) => {
-      if (status === 'resulted') {
+      if (status === 'result_ready') {
         const order = orders.find(o => o.id === id)
         if (order) openResultsModal(order)
         return Promise.resolve({} as any)
       }
+      if (status === 'verified') return labService.verifyResults(id)
       return labService.updateStatus(id, status)
     },
     onSuccess: (_, vars) => {
-      if (vars.status !== 'resulted') qc.invalidateQueries({ queryKey: ['lab-orders'] })
+      if (vars.status !== 'result_ready') qc.invalidateQueries({ queryKey: ['lab-orders'] })
     },
   })
 
@@ -94,7 +99,7 @@ export default function LabPage() {
   })
 
   const active = orders.filter(o => !['resulted', 'rejected'].includes(o.status))
-  const resulted = orders.filter(o => o.status === 'resulted')
+  const resulted = orders.filter(o => ['result_ready', 'verified', 'completed'].includes(o.status))
   const rejected = orders.filter(o => o.status === 'rejected')
 
   return (

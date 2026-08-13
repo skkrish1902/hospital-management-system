@@ -11,7 +11,7 @@ from app.db.engine import init_db
 from app.middleware.tenant import TenantMiddleware
 from app.middleware.audit import AuditLogMiddleware
 from app.websocket.manager import ws_manager
-from app.websocket.redis_bridge import start_redis_subscriber
+from app.websocket.redis_bridge import start_redis_subscriber, stop_redis_subscriber
 from app.api.v1.router import api_router
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     await start_redis_subscriber(ws_manager)
     yield
-    # Shutdown — nothing to clean up explicitly; connections close on process exit
+    await stop_redis_subscriber()
 
 
 app = FastAPI(

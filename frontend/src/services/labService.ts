@@ -19,6 +19,9 @@ export const labService = {
   enterResults: (orderId: string, payload: LabResultPayload) =>
     apiClient.post<LabResult>(`/lab/${orderId}/results`, payload).then(r => r.data),
 
+  verifyResults: (orderId: string) =>
+    apiClient.post<LabOrder>(`/lab/${orderId}/verify`).then(r => r.data),
+
   uploadReport: (orderId: string, file: File) => {
     const form = new FormData()
     form.append('file', file)

@@ -43,7 +43,27 @@ class InvoiceCreate(BaseModel):
 
 
 class InvoicePayment(BaseModel):
-    payment_method: str  # cash | upi | card | insurance
+    payment_method: str  # cash | upi | card | insurance | razorpay
+    amount: Optional[float] = None
+    transaction_reference: Optional[str] = None
+
+
+class PaymentRead(BaseModel):
+    id: uuid.UUID
+    invoice_id: uuid.UUID
+    amount: float
+    payment_method: str
+    status: str
+    transaction_reference: Optional[str] = None
+    gateway: Optional[str] = None
+    paid_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class RefundCreate(BaseModel):
+    amount: Optional[float] = None
+    reason: str
 
 
 class InvoiceRead(BaseModel):
@@ -54,6 +74,8 @@ class InvoiceRead(BaseModel):
     discount: float
     tax: float
     total: float
+    paid_amount: float = 0.0
+    balance: float = 0.0
     payment_method: Optional[str] = None
     status: str
     source: Optional[str] = None
@@ -61,6 +83,7 @@ class InvoiceRead(BaseModel):
     paid_at: Optional[datetime] = None
     razorpay_order_id: Optional[str] = None
     razorpay_payment_id: Optional[str] = None
+    receipt_number: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

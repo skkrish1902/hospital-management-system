@@ -46,6 +46,15 @@ export const billingService = {
   pay: (invoiceId: string, payment_method: string) =>
     apiClient.post<Invoice>(`/billing/${invoiceId}/pay`, { payment_method }).then(r => r.data),
 
+  recordPayment: (invoiceId: string, data: { payment_method: string; amount?: number; transaction_reference?: string }) =>
+    apiClient.post(`/billing/${invoiceId}/payments`, data).then(r => r.data),
+
+  getReceipt: (invoiceId: string) =>
+    apiClient.get<Invoice>(`/billing/${invoiceId}/receipt`).then(r => r.data),
+
+  refund: (invoiceId: string, data: { amount?: number; reason: string }) =>
+    apiClient.post<Invoice>(`/billing/${invoiceId}/refund`, data).then(r => r.data),
+
   syncPayment: (invoiceId: string) =>
     apiClient.post<Invoice>(`/billing/${invoiceId}/sync-payment`).then(r => r.data),
 

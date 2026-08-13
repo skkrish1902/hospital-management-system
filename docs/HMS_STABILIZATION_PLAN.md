@@ -31,9 +31,9 @@ Only the explicitly assigned phase may be implemented.
 | 10    | Consultation                          | COMPLETE |
 | 11    | Structured Prescription               | COMPLETE |
 | 12    | Pharmacy Workflow                     | COMPLETE |
-| 13    | Lab Workflow                          | PENDING  |
-| 14    | Billing Workflow                      | PENDING  |
-| 15    | Queue / Real-Time Events              | PENDING  |
+| 13    | Lab Workflow                          | COMPLETE |
+| 14    | Billing Workflow                      | COMPLETE |
+| 15    | Queue / Real-Time Events              | COMPLETE |
 | 16    | Audit Framework                       | PENDING  |
 | 17    | RBAC Enforcement                      | PENDING  |
 | 18    | Tenant Feature Enforcement            | PENDING  |

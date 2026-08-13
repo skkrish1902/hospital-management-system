@@ -44,9 +44,9 @@ export type AppointmentStatus =
   | 'cancelled'
   | 'no_show'
 
-export type InvoiceStatus = 'draft' | 'paid' | 'cancelled'
+export type InvoiceStatus = 'draft' | 'pending' | 'partially_paid' | 'paid' | 'cancelled' | 'refunded'
 
-export type PaymentMethod = 'cash' | 'upi' | 'card' | 'insurance' | 'follow_up'
+export type PaymentMethod = 'cash' | 'upi' | 'card' | 'insurance' | 'razorpay' | 'follow_up'
 
 // Entities
 export interface Patient {
@@ -236,11 +236,14 @@ export interface Invoice {
   discount: number
   tax: number
   total: number
+  paid_amount: number
+  balance: number
   payment_method?: PaymentMethod
   status: InvoiceStatus
   paid_at?: string
   razorpay_order_id?: string
   razorpay_payment_id?: string
+  receipt_number?: string
 }
 
 export interface Appointment {
@@ -272,7 +275,7 @@ export interface LabOrder {
   id: UUID
   visit_id: UUID
   tests: { test: string; notes?: string }[]
-  status: 'ordered' | 'sample_collected' | 'processing' | 'resulted' | 'rejected'
+  status: 'ordered' | 'sample_pending' | 'sample_collected' | 'processing' | 'result_ready' | 'verified' | 'completed' | 'rejected'
   ordered_at: string
   patient_name?: string
   doctor_name?: string
@@ -287,6 +290,8 @@ export interface LabResult {
   report_url?: string
   reported_by_user_id?: UUID
   reported_at: string
+  verified_by_user_id?: UUID
+  verified_at?: string
 }
 
 export interface PharmacyQueueItem {

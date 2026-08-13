@@ -13,19 +13,11 @@ Special: ?token=display  allows read-only access to queue:update for TV display 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from app.core.security import decode_token
-from app.websocket.manager import ws_manager
+from app.websocket.manager import ALLOWED_EVENT_CHANNELS, ws_manager
 
 ws_router = APIRouter()
 
-_ALLOWED_CHANNELS = {
-    "queue:update",
-    "appointment:update",
-    "visit:update",
-    "pharmacy:update",
-    "lab:update",
-    "pos:payment",    # POS kiosk screen — payment request/success events
-    "indent:update",  # Indent status / items / amount changes
-}
+_ALLOWED_CHANNELS = ALLOWED_EVENT_CHANNELS
 
 # Channels accessible without a JWT (public display boards / kiosks)
 _PUBLIC_CHANNELS = {

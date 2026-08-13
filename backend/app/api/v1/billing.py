@@ -15,11 +15,11 @@ from app.core.dependencies import require_role, require_feature
 from app.core.config import settings
 from app.core.razorpay_service import create_razorpay_order, fetch_order_payments, verify_webhook_signature
 from app.db.engine import AsyncSessionLocal, get_session, tenant_schema_var
-from app.models.tenant.invoice import Invoice
+from app.models.tenant.invoice import Invoice, Payment, Refund, invoice_status_for_payment
 from app.models.tenant.patient import Patient
 from app.models.tenant.pharmacy_queue import PharmacyQueue
 from app.models.tenant.visit import Visit, VisitStatus
-from app.schemas.invoice import InvoiceCreate, InvoicePayment, InvoiceRead
+from app.schemas.invoice import InvoiceCreate, InvoicePayment, InvoiceRead, PaymentRead, RefundCreate
 from app.services.visit_workflow import VisitTransitionSource, VisitWorkflowService
 from app.websocket.manager import ws_manager
 
@@ -77,9 +77,35 @@ async def list_invoices(
 
 
 def _compute_totals(line_items: list | None, discount: float, tax: float) -> float:
+    if discount < 0 or tax < 0:
+        raise HTTPException(status_code=400, detail="Discount and tax cannot be negative")
     subtotal = sum(item.get("amount", 0) for item in (line_items or []))
+    if discount > subtotal:
+        raise HTTPException(status_code=400, detail="Discount cannot exceed subtotal")
     total = subtotal - discount + tax
     return subtotal, max(total, 0.0)
+
+
+async def _record_payment(invoice: Invoice, payload: InvoicePayment, session: AsyncSession) -> Payment:
+    if invoice.status in ("cancelled", "refunded", "paid"):
+        raise HTTPException(status_code=400, detail=f"Invoice already {invoice.status}")
+    amount = payload.amount if payload.amount is not None else invoice.balance
+    if amount <= 0 or amount > invoice.balance:
+        raise HTTPException(status_code=400, detail="Payment amount must be greater than zero and no more than the balance")
+    payment = Payment(
+        id=uuid.uuid4(), invoice_id=invoice.id, amount=amount,
+        payment_method=payload.payment_method, transaction_reference=payload.transaction_reference,
+        gateway="razorpay" if payload.payment_method == "razorpay" else None,
+        paid_at=datetime.now(timezone.utc),
+    )
+    session.add(payment)
+    invoice.paid_amount = float(invoice.paid_amount) + amount
+    invoice.payment_method = payload.payment_method
+    invoice.status = invoice_status_for_payment(float(invoice.total), float(invoice.paid_amount))
+    if invoice.status == "paid":
+        invoice.paid_at = payment.paid_at
+        invoice.receipt_number = invoice.receipt_number or f"RCT-{datetime.now(timezone.utc):%Y%m%d}-{str(invoice.id)[:8].upper()}"
+    return payment
 
 
 @router.post("", response_model=InvoiceRead, status_code=status.HTTP_201_CREATED)
@@ -147,12 +173,7 @@ async def pay_invoice(
     invoice = await session.get(Invoice, invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    if invoice.status != "draft":
-        raise HTTPException(status_code=400, detail=f"Invoice already {invoice.status}")
-
-    invoice.payment_method = payload.payment_method
-    invoice.status = "paid"
-    invoice.paid_at = datetime.now(timezone.utc)
+    await _record_payment(invoice, payload, session)
 
     # Transition visit based on billing type:
     # pre_billing (upfront at reception) → registered (now visible to nurse)
@@ -181,6 +202,73 @@ async def pay_invoice(
         "visit_id": str(invoice.visit_id),
     })
 
+    return invoice
+
+
+@router.post("/{invoice_id}/payments", response_model=PaymentRead, status_code=status.HTTP_201_CREATED)
+async def record_invoice_payment(
+    invoice_id: uuid.UUID,
+    payload: InvoicePayment,
+    session: AsyncSession = Depends(get_session),
+    _: dict = Depends(require_role("receptionist", "billing_officer", "hospital_admin", "super_admin")),
+):
+    invoice = await session.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    payment = await _record_payment(invoice, payload, session)
+    await session.commit()
+    await session.refresh(payment)
+    return payment
+
+
+@router.get("/{invoice_id}/payments", response_model=List[PaymentRead])
+async def list_invoice_payments(
+    invoice_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    _: dict = Depends(require_role("receptionist", "billing_officer", "hospital_admin", "super_admin")),
+):
+    if not await session.get(Invoice, invoice_id):
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    return (await session.execute(
+        select(Payment).where(Payment.invoice_id == invoice_id).order_by(Payment.paid_at)
+    )).scalars().all()
+
+
+@router.get("/{invoice_id}/receipt", response_model=InvoiceRead)
+async def get_invoice_receipt(
+    invoice_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    _: dict = Depends(require_role("receptionist", "billing_officer", "nurse", "doctor", "hospital_admin", "super_admin")),
+):
+    invoice = await session.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice.status not in ("paid", "refunded"):
+        raise HTTPException(status_code=400, detail="Receipt is available after full payment")
+    return invoice
+
+
+@router.post("/{invoice_id}/refund", response_model=InvoiceRead)
+async def refund_invoice(
+    invoice_id: uuid.UUID,
+    payload: RefundCreate,
+    session: AsyncSession = Depends(get_session),
+    _: dict = Depends(require_role("billing_officer", "hospital_admin", "super_admin")),
+):
+    invoice = await session.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice.status != "paid":
+        raise HTTPException(status_code=400, detail="Only fully paid invoices can be refunded")
+    if payload.amount is not None and payload.amount != float(invoice.paid_amount):
+        raise HTTPException(status_code=400, detail="Only full invoice refunds are supported")
+    session.add(Refund(
+        id=uuid.uuid4(), invoice_id=invoice.id, amount=invoice.paid_amount,
+        reason=payload.reason, refunded_at=datetime.now(timezone.utc),
+    ))
+    invoice.status = "refunded"
+    await session.commit()
+    await session.refresh(invoice)
     return invoice
 
 
@@ -449,6 +537,23 @@ async def razorpay_webhook(request: Request):
             invoice.payment_method = payment_method
             invoice.status = "paid"
             invoice.paid_at = datetime.now(timezone.utc)
+            invoice.paid_amount = invoice.total
+            invoice.receipt_number = invoice.receipt_number or f"RCT-{datetime.now(timezone.utc):%Y%m%d}-{str(invoice.id)[:8].upper()}"
+
+            if payment_id:
+                existing_payment = (await session.execute(
+                    select(Payment).where(Payment.transaction_reference == payment_id)
+                )).scalar_one_or_none()
+                if not existing_payment:
+                    session.add(Payment(
+                        id=uuid.uuid4(),
+                        invoice_id=invoice.id,
+                        amount=invoice.total,
+                        payment_method=payment_method or "razorpay",
+                        transaction_reference=payment_id,
+                        gateway="razorpay",
+                        paid_at=invoice.paid_at,
+                    ))
             
             logger.info(
                 "Webhook: Set invoice fields — razorpay_payment_id=%s, payment_method=%s, status=paid, paid_at=%s",
@@ -462,7 +567,7 @@ async def razorpay_webhook(request: Request):
                         session,
                         visit,
                         VisitStatus.CLOSED,
-                        current_user.get("sub"),
+                        None,
                         VisitTransitionSource.SYSTEM,
                     )
                 except ValueError:

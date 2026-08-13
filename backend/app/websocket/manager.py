@@ -11,10 +11,23 @@ Example channels:
 
 import asyncio
 import json
+import logging
 from collections import defaultdict
 from typing import DefaultDict
 
 from fastapi import WebSocket
+
+logger = logging.getLogger(__name__)
+
+ALLOWED_EVENT_CHANNELS = frozenset({
+    "queue:update",
+    "appointment:update",
+    "visit:update",
+    "pharmacy:update",
+    "lab:update",
+    "pos:payment",
+    "indent:update",
+})
 
 
 class WebSocketManager:
@@ -37,7 +50,19 @@ class WebSocketManager:
                 conns.remove(websocket)
 
     async def broadcast(self, tenant: str, channel: str, message: dict) -> None:
-        """Send a JSON message to all subscribers on a tenant channel."""
+        """Publish an event through Redis, with local delivery fallback."""
+        self._validate_route(tenant, channel)
+        from app.websocket.redis_bridge import publish_event
+
+        try:
+            await publish_event(tenant, channel, message)
+        except Exception:
+            logger.exception("Redis event publish failed; delivering locally")
+            await self.broadcast_local(tenant, channel, message)
+
+    async def broadcast_local(self, tenant: str, channel: str, message: dict) -> None:
+        """Send an already-published event to this process's subscribers."""
+        self._validate_route(tenant, channel)
         payload = json.dumps(message)
         dead: list[WebSocket] = []
         async with self._lock:
@@ -57,6 +82,13 @@ class WebSocketManager:
                         self._connections[tenant][channel].remove(ws)
                     except ValueError:
                         pass
+
+    @staticmethod
+    def _validate_route(tenant: str, channel: str) -> None:
+        if not tenant or not tenant.replace("_", "").isalnum():
+            raise ValueError("Invalid tenant event namespace")
+        if channel not in ALLOWED_EVENT_CHANNELS:
+            raise ValueError("Invalid event channel")
 
 
 # Singleton instance used across the application

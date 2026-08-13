@@ -85,18 +85,14 @@ def verify_webhook_signature(body: bytes, signature: str) -> bool:
     Verify the X-Razorpay-Signature HMAC-SHA256 header.
 
     Returns True if the signature is valid.
-    If RAZORPAY_WEBHOOK_SECRET is not configured (e.g. local dev),
-    skips verification and returns True — log a warning instead.
+    A configured webhook secret is mandatory. Unsigned webhooks are rejected.
     """
     from app.core.config import settings
 
     secret = settings.RAZORPAY_WEBHOOK_SECRET
     if not secret:
-        logger.warning(
-            "RAZORPAY_WEBHOOK_SECRET not set — skipping webhook signature check. "
-            "Set it in production!"
-        )
-        return True
+        logger.error("RAZORPAY_WEBHOOK_SECRET not set — rejecting webhook")
+        return False
 
     expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)
