@@ -275,6 +275,11 @@ Typical:
 * collected_at
 * processing timestamps
 * result timestamps
+* sample_collected_at
+* processing_started_at
+* result_ready_at
+* verified_at
+* completed_at
 
 LabOrder status is independent of Visit status.
 
@@ -414,6 +419,8 @@ Typical:
 * link_sent_at
 * submitted_at
 
+Feedback channel values are `qr`, `sms`, `whatsapp`, `kiosk`, or `staff`. One feedback row is allowed per Visit.
+
 Future escalation logic may reference feedback without changing the clinical Visit.
 
 ---
@@ -432,6 +439,8 @@ Typical:
 * attendance status
 * substitution
 * active
+
+Roster entries also store `substitute_user_id` and `substitution_reason`, and new entries require a department.
 
 Roster should support future utilization calculations.
 
@@ -546,6 +555,8 @@ Capture semantic timestamps such as:
 * consultation_completed_at
 * payment_at
 * dispensed_at
+
+Visit stores semantic registration, nurse, doctor, consultation, and billing timestamps. The visit TAT endpoint calculates durations from these persisted values and downstream lab/pharmacy/billing timestamps.
 
 These timestamps form the foundation for TAT and SLA analytics.
 

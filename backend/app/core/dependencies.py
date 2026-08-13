@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
@@ -11,6 +12,7 @@ from app.db.engine import get_session
 from app.core.redis_client import get_cached_features, set_cached_features, get_tenant_forced_logout_time
 
 bearer_scheme = HTTPBearer()
+logger = logging.getLogger(__name__)
 
 
 async def get_current_user(
@@ -100,41 +102,51 @@ def require_feature(feature: str):
         current_user: Annotated[dict, Depends(get_current_user)],
         session: Annotated[AsyncSession, Depends(get_session)],
     ) -> dict:
-        import uuid
-        from app.models.public.tenant_feature import TenantFeature
-
-        tenant_id_str = current_user.get("tenant_id")
-        # Graceful fallback: if the JWT has no tenant_id (old tokens or super_admin)
-        # fall back to the stale JWT features list.
-        if not tenant_id_str:
-            features = current_user.get("features")
-            if features is not None and feature not in features:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Feature '{feature}' is not enabled for your hospital's plan.",
-                )
-            return current_user
-
-        tenant_id = uuid.UUID(tenant_id_str)
-
-        # 1. Try Redis cache
-        cached = await get_cached_features(tenant_id)
-        if cached is not None:
-            enabled = cached
-        else:
-            # 2. Read from DB and populate cache
-            rows = await session.execute(
-                select(TenantFeature.feature)
-                .where(TenantFeature.tenant_id == tenant_id, TenantFeature.enabled == True)  # noqa: E712
-            )
-            enabled = [row[0] for row in rows.fetchall()]
-            await set_cached_features(tenant_id, enabled)
-
-        if feature not in enabled:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Feature '{feature}' is not enabled for your hospital's plan.",
-            )
+        await ensure_feature_enabled(feature, current_user, session)
         return current_user
 
     return _check
+
+
+async def ensure_feature_enabled(
+    feature: str,
+    current_user: dict,
+    session: AsyncSession,
+) -> None:
+    """Enforce a feature from authoritative tenant data, with optional Redis cache."""
+    import uuid
+    from app.models.public.tenant_feature import TenantFeature
+
+    tenant_id_str = current_user.get("tenant_id")
+    if not tenant_id_str:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenant feature context is missing; please sign in again.",
+        )
+    try:
+        tenant_id = uuid.UUID(str(tenant_id_str))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid tenant feature context") from exc
+
+    enabled: list[str] | None = None
+    try:
+        enabled = await get_cached_features(tenant_id)
+    except Exception:
+        logger.warning("Tenant feature cache unavailable; reading PostgreSQL", exc_info=True)
+
+    if enabled is None:
+        rows = await session.execute(
+            select(TenantFeature.feature)
+            .where(TenantFeature.tenant_id == tenant_id, TenantFeature.enabled == True)  # noqa: E712
+        )
+        enabled = [row[0] for row in rows.fetchall()]
+        try:
+            await set_cached_features(tenant_id, enabled)
+        except Exception:
+            logger.warning("Tenant feature cache write failed", exc_info=True)
+
+    if feature not in enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Feature '{feature}' is not enabled for your hospital's plan.",
+        )

@@ -74,6 +74,16 @@ hospital-management-system/
 
 See [PLAN.md](./PLAN.md) for the complete architecture, database schema design, WebSocket events, and implementation phase roadmap.
 
+Release documentation:
+
+- [API contract](./docs/API.md)
+- [OPD workflow](./docs/OPD_WORKFLOW.md)
+- [State diagrams](./docs/STATE_DIAGRAMS.md)
+- [RBAC matrix](./docs/RBAC_MATRIX.md)
+- [Tenant architecture](./docs/TENANT_ARCHITECTURE.md)
+- [Deployment runbook](./docs/DEPLOYMENT.md)
+- [Data model](./docs/DATA_MODEL.md)
+
 ---
 
 ## Tech Stack

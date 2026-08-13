@@ -18,7 +18,7 @@ interface AuthState {
   sessionExpired: boolean
   /**
    * Feature keys enabled for this tenant, as embedded in the JWT.
-   * null  = old token (pre-Phase 2) — treat as full access during transition.
+  * null  = old token without authoritative entitlements — deny feature access.
    * []    = new token, tenant has no features enabled.
    * [...] = new token, specific enabled features.
    */
@@ -30,7 +30,7 @@ interface AuthState {
   isAuthenticated: () => boolean
   /**
    * Returns true if the tenant has the given feature enabled.
-   * Always returns true when features is null (old token / transition window).
+  * Returns false when features is null until a fresh authoritative token is loaded.
    */
   hasFeature: (key: string) => boolean
 }
@@ -55,7 +55,7 @@ export const useAuthStore = create<AuthState>()(
 
       setTokens: (access: string, refresh: string) => {
         const payload = parseJwt(access)
-        // features may be absent in old tokens — keep null so hasFeature allows all
+        // features may be absent in old tokens — keep null so hasFeature denies access
         const features = Array.isArray(payload.features)
           ? (payload.features as string[])
           : null
@@ -92,8 +92,8 @@ export const useAuthStore = create<AuthState>()(
 
       hasFeature: (key: string) => {
         const features = get().features
-        // null = old token (pre-entitlements) → allow everything during transition
-        if (features === null) return true
+        // Missing feature claims are not authoritative; require a fresh login token.
+        if (features === null) return false
         return features.includes(key)
       },
     }),

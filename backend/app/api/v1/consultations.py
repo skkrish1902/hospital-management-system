@@ -17,6 +17,7 @@ from app.models.tenant.patient import Patient
 from app.models.tenant.visit import Visit, VisitStatus
 from app.schemas.consultation import ConsultationCreate, ConsultationRead, ConsultationUpdate
 from app.services.visit_workflow import VisitTransitionSource, VisitWorkflowService
+from app.services.audit_service import record_audit
 from app.websocket.manager import ws_manager
 
 router = APIRouter()
@@ -112,6 +113,15 @@ async def create_consultation(
         except ValueError:
             pass
 
+    record_audit(
+        session,
+        current_user=current_user,
+        action="CREATE",
+        resource_type="consultation",
+        resource_id=consult.id,
+        visit_id=visit.id,
+        new_value={"status": consult.status, "fields": data},
+    )
     await session.commit()
     await session.refresh(consult)
     return consult
@@ -141,6 +151,7 @@ async def update_consultation(
         )
 
     data = payload.model_dump(exclude_unset=True)
+    old_value = {field: getattr(consult, field, None) for field in data}
     if "diagnosis_icd10" in data:
         diag = data["diagnosis_icd10"]
         if isinstance(diag, str):
@@ -190,6 +201,17 @@ async def update_consultation(
     if consult.status == "draft" and not consult.started_at:
         consult.started_at = datetime.now(timezone.utc)
 
+    record_audit(
+        session,
+        current_user=current_user,
+        action="UPDATE" if consult.status != "amended" else "AMEND",
+        resource_type="consultation",
+        resource_id=consult.id,
+        visit_id=visit.id,
+        old_value=old_value,
+        new_value=data,
+        reason="Controlled clinical amendment" if consult.status == "amended" else None,
+    )
     await session.commit()
     await session.refresh(consult)
     return consult

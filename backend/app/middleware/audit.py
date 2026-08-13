@@ -27,6 +27,9 @@ async def _write_audit_entry(
     path: str,
     status_code: int,
     ip_address: str | None,
+    role: str | None,
+    request_id: str,
+    request_metadata: dict,
 ) -> None:
     """Background task: open a fresh DB connection and persist the log row."""
     try:
@@ -42,10 +45,13 @@ async def _write_audit_entry(
             session.add(AuditLog(
                 tenant_schema=tenant_schema,
                 user_id=uid,
+                role=role,
+                request_id=request_id,
                 method=method,
                 path=path,
                 status_code=status_code,
                 ip_address=ip_address,
+                request_metadata=request_metadata,
             ))
             await session.commit()
     except Exception:
@@ -63,12 +69,14 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
 
         # Extract user_id from JWT (best-effort — no error if absent)
         user_id: str | None = None
+        role: str | None = None
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
             try:
                 from app.core.security import decode_token
                 payload = decode_token(auth_header[7:])
                 user_id = payload.get("sub")
+                role = payload.get("role")
             except JWTError:
                 pass
 
@@ -78,6 +86,11 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
 
         # Client IP — respect X-Forwarded-For set by nginx
         ip_address = request.headers.get("X-Forwarded-For", request.client.host if request.client else None)
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request_metadata = {
+            "query": request.url.query,
+            "user_agent": request.headers.get("User-Agent"),
+        }
 
         asyncio.create_task(
             _write_audit_entry(
@@ -87,6 +100,9 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                 path=request.url.path,
                 status_code=response.status_code,
                 ip_address=ip_address,
+                role=role,
+                request_id=request_id,
+                request_metadata=request_metadata,
             )
         )
 

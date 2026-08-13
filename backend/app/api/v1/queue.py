@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user, require_role, require_feature
+from app.core.dependencies import ensure_feature_enabled, get_current_user, require_role, require_feature
 from app.core.razorpay_service import create_razorpay_order
 from app.db.engine import get_session
 from app.models.tenant.department import Department
@@ -94,6 +94,8 @@ async def issue_token(
         appointment_id=payload.appointment_id,
         department_id=payload.department_id,
         status=VisitStatus.REGISTERED.value,
+        arrived_at=now,
+        registered_at=now,
     )
     session.add(visit)
     # Flush visit so its PK exists in the DB before invoice FK references it
@@ -124,6 +126,7 @@ async def issue_token(
             tax=0.0,
             total=consultation_fee,
             status="draft",
+            billing_started_at=now,
         )
         session.add(invoice)
     elif payload.waive_fee and consultation_fee > 0:
@@ -143,6 +146,8 @@ async def issue_token(
             status="paid",
             payment_method="follow_up",
             paid_at=now,
+            billing_started_at=now,
+            billing_completed_at=now,
         )
         session.add(invoice)
 
@@ -157,6 +162,7 @@ async def issue_token(
 
     # Create Razorpay order and push to POS screen (if payment needed)
     if invoice and needs_payment:
+        await ensure_feature_enabled("razorpay", current_user, session)
         razorpay_order = create_razorpay_order(
             amount_rupees=consultation_fee,
             receipt=str(invoice.id)[:40],

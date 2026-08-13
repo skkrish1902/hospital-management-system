@@ -34,14 +34,14 @@ Only the explicitly assigned phase may be implemented.
 | 13    | Lab Workflow                          | COMPLETE |
 | 14    | Billing Workflow                      | COMPLETE |
 | 15    | Queue / Real-Time Events              | COMPLETE |
-| 16    | Audit Framework                       | PENDING  |
-| 17    | RBAC Enforcement                      | PENDING  |
-| 18    | Tenant Feature Enforcement            | PENDING  |
-| 19    | Nurse Roster                          | PENDING  |
-| 20    | TAT / Operational Timing              | PENDING  |
-| 21    | Feedback                              | PENDING  |
-| 22    | Automated Test Expansion              | PENDING  |
-| 23    | Frontend UX Alignment                 | PENDING  |
+| 16    | Audit Framework                       | COMPLETE |
+| 17    | RBAC Enforcement                      | COMPLETE |
+| 18    | Tenant Feature Enforcement            | COMPLETE |
+| 19    | Nurse Roster                          | COMPLETE |
+| 20    | TAT / Operational Timing              | COMPLETE |
+| 21    | Feedback                              | COMPLETE |
+| 22    | Automated Test Expansion              | COMPLETE |
+| 23    | Frontend UX Alignment                 | COMPLETE |
 | 24    | Documentation / Stabilization Release | PENDING  |
 
 ---

@@ -12,7 +12,7 @@ from sqlalchemy import select, text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.dependencies import require_role, require_feature
+from app.core.dependencies import ensure_feature_enabled, require_role, require_feature
 from app.core.pdf_service import generate_and_upload_prescription_pdf
 from app.core.razorpay_service import create_razorpay_order
 from app.core.sms import send_prescription_whatsapp
@@ -30,6 +30,7 @@ from app.schemas.invoice import InvoiceRead, PharmacyBillCreate
 from app.schemas.pharmacy import PharmacyQueueRead, PharmacyStatusUpdate
 from app.services.visit_workflow import VisitTransitionSource, VisitWorkflowService
 from app.websocket.manager import ws_manager
+from app.services.audit_service import record_audit
 
 logger = logging.getLogger(__name__)
 
@@ -79,9 +80,29 @@ async def update_pharmacy_status(
     if payload.status not in allowed_statuses:
         raise HTTPException(status_code=400, detail=f"Unsupported pharmacy status: {payload.status}")
 
+    old_status = pq.status
+    now = datetime.now(timezone.utc)
     pq.status = payload.status
+    if payload.status == "called":
+        pq.called_at = pq.called_at or now
+    elif payload.status == "dispensing":
+        pq.dispensing_started_at = pq.dispensing_started_at or now
+    elif payload.status == "dispensed":
+        pq.dispensed_at = pq.dispensed_at or now
     if payload.notes is not None:
         pq.notes = payload.notes
+
+    rx = await session.get(Prescription, pq.prescription_id)
+    record_audit(
+        session,
+        current_user=current_user,
+        action="UPDATE",
+        resource_type="pharmacy_dispense",
+        resource_id=pq.id,
+        visit_id=rx.visit_id if rx else None,
+        old_value={"status": old_status},
+        new_value={"status": pq.status, "notes": pq.notes},
+    )
 
     await session.commit()
     await session.refresh(pq)
@@ -238,6 +259,7 @@ async def bill_pharmacy_dispense(
         source="pharmacy",
         pharmacy_queue_id=pq_id,
         status="draft",
+        billing_started_at=datetime.now(timezone.utc),
     )
     session.add(invoice)
 
@@ -254,6 +276,7 @@ async def bill_pharmacy_dispense(
         invoice.payment_method = "cash"
         invoice.status = "paid"
         invoice.paid_at = datetime.now(timezone.utc)
+        invoice.billing_completed_at = invoice.paid_at
         
         logger.info(
             "Pharmacy bill: Set invoice to paid - status=%s, payment_method=%s, paid_at=%s",
@@ -307,6 +330,7 @@ async def bill_pharmacy_dispense(
             )
     else:
         # online — create Razorpay order and broadcast payment request to POS kiosk
+        await ensure_feature_enabled("razorpay", current_user, session)
         logger.info("Pharmacy bill: Processing ONLINE payment for invoice %s", invoice.id)
         
         await session.commit()

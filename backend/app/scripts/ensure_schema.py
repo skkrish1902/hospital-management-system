@@ -54,6 +54,11 @@ TENANT_COLUMNS: dict = {
         ("uhid",       "VARCHAR(20)"),
         ("status",     "VARCHAR(20) NOT NULL DEFAULT 'ordered'"),
         ("ordered_at", "TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()"),
+        ("sample_collected_at", "TIMESTAMP WITH TIME ZONE"),
+        ("processing_started_at", "TIMESTAMP WITH TIME ZONE"),
+        ("result_ready_at", "TIMESTAMP WITH TIME ZONE"),
+        ("verified_at", "TIMESTAMP WITH TIME ZONE"),
+        ("completed_at", "TIMESTAMP WITH TIME ZONE"),
     ],
     "lab_results": [
         ("uhid",               "VARCHAR(20)"),
@@ -65,10 +70,29 @@ TENANT_COLUMNS: dict = {
         ("verified_by_user_id","UUID"),
         ("verified_at",        "TIMESTAMP WITH TIME ZONE"),
     ],
+    "audit_logs": [
+        ("tenant_schema",      "VARCHAR(100)"),
+        ("role",               "VARCHAR(50)"),
+        ("visit_id",           "UUID"),
+        ("reason",             "TEXT"),
+        ("request_metadata",   "JSONB"),
+    ],
     "pharmacy_queue": [
         ("uhid",       "VARCHAR(20)"),
         ("notes",      "TEXT"),
         ("updated_at", "TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()"),
+        ("called_at", "TIMESTAMP WITH TIME ZONE"),
+        ("dispensing_started_at", "TIMESTAMP WITH TIME ZONE"),
+        ("dispensed_at", "TIMESTAMP WITH TIME ZONE"),
+    ],
+    "nurse_roster": [
+        ("department_id",       "UUID"),
+        ("substitute_user_id",  "UUID"),
+        ("substitution_reason", "TEXT"),
+        ("is_active",            "BOOLEAN NOT NULL DEFAULT TRUE"),
+    ],
+    "feedback": [
+        ("channel", "VARCHAR(20) NOT NULL DEFAULT 'staff'"),
     ],
     "invoices": [
         ("uhid",               "VARCHAR(20)"),

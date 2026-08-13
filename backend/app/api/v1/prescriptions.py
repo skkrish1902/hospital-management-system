@@ -16,6 +16,7 @@ from app.models.tenant.prescription import Prescription, PrescriptionItem
 from app.models.tenant.visit import Visit, VisitStatus
 from app.schemas.prescription import PrescriptionCreate, PrescriptionRead, PrescriptionUpdate
 from app.services.visit_workflow import VisitTransitionSource, VisitWorkflowService
+from app.services.audit_service import record_audit
 from app.websocket.manager import ws_manager
 
 router = APIRouter()
@@ -121,6 +122,15 @@ async def create_prescription(
         except ValueError:
             pass
 
+    record_audit(
+        session,
+        current_user=current_user,
+        action="UPDATE" if existing_rx else "CREATE",
+        resource_type="prescription",
+        resource_id=prescription.id,
+        visit_id=visit.id,
+        new_value={"status": prescription.status, "medicines": medicines_data, "has_lab_tests": bool(payload.lab_tests)},
+    )
     await session.commit()
     loaded = await session.execute(
         select(Prescription)
@@ -181,6 +191,16 @@ async def update_prescription(
         rx.doctor_id = payload.doctor_id
     if payload.instructions is not None:
         rx.instructions = payload.instructions
+
+    record_audit(
+        session,
+        current_user=_,
+        action="UPDATE",
+        resource_type="prescription",
+        resource_id=rx.id,
+        visit_id=visit_id,
+        new_value={"medicines": rx.medicines, "instructions": rx.instructions},
+    )
 
     await session.commit()
     loaded = await session.execute(

@@ -17,6 +17,7 @@ from app.models.tenant.patient import Patient
 from app.models.tenant.visit import Visit
 from app.schemas.lab import LabOrderCreate, LabOrderRead, LabResultCreate, LabResultRead
 from app.websocket.manager import ws_manager
+from app.services.audit_service import record_audit
 
 router = APIRouter(dependencies=[Depends(require_feature("lab"))])
 
@@ -51,6 +52,15 @@ async def create_lab_order(
         status="ordered",
     )
     session.add(order)
+    record_audit(
+        session,
+        current_user=current_user,
+        action="CREATE",
+        resource_type="lab_order",
+        resource_id=order.id,
+        visit_id=order.visit_id,
+        new_value={"status": order.status, "tests": order.tests},
+    )
     await session.commit()
     await session.refresh(order)
 
@@ -99,7 +109,25 @@ async def update_lab_order_status(
     ):
         raise HTTPException(status_code=403, detail="Only lab staff can finalize lab results")
     validate_lab_transition(order.status, new_status)
+    old_status = order.status
+    now = datetime.now(timezone.utc)
     order.status = new_status
+    if new_status == "sample_collected":
+        order.sample_collected_at = order.sample_collected_at or now
+    elif new_status == "processing":
+        order.processing_started_at = order.processing_started_at or now
+    elif new_status == "completed":
+        order.completed_at = order.completed_at or now
+    record_audit(
+        session,
+        current_user=current_user,
+        action="UPDATE",
+        resource_type="lab_order",
+        resource_id=order.id,
+        visit_id=order.visit_id,
+        old_value={"status": old_status},
+        new_value={"status": new_status},
+    )
     await session.commit()
     await session.refresh(order)
 
@@ -125,6 +153,17 @@ async def reject_lab_order(
     if order.status not in ("sample_pending", "sample_collected", "processing"):
         raise HTTPException(status_code=400, detail="Can only reject after sample collection")
     order.status = "rejected"
+    record_audit(
+        session,
+        current_user=current_user,
+        action="UPDATE",
+        resource_type="lab_order",
+        resource_id=order.id,
+        visit_id=order.visit_id,
+        old_value={"status": order.status},
+        new_value={"status": "rejected"},
+        reason="Sample rejected",
+    )
     await session.commit()
     await session.refresh(order)
 
@@ -163,6 +202,16 @@ async def enter_lab_results(
     )
     session.add(result)
     order.status = "result_ready"
+    order.result_ready_at = order.result_ready_at or datetime.now(timezone.utc)
+    record_audit(
+        session,
+        current_user=current_user,
+        action="CREATE",
+        resource_type="lab_result",
+        resource_id=result.id,
+        visit_id=order.visit_id,
+        new_value={"results": payload.results, "notes": payload.notes, "status": order.status},
+    )
     await session.commit()
     await session.refresh(result)
 
@@ -196,7 +245,18 @@ async def verify_lab_results(
         raise HTTPException(status_code=400, detail="No results available for verification")
     result.verified_by_user_id = uuid.UUID(current_user["sub"])
     result.verified_at = datetime.now(timezone.utc)
+    order.verified_at = result.verified_at
     order.status = "verified"
+    record_audit(
+        session,
+        current_user=current_user,
+        action="UPDATE",
+        resource_type="lab_result",
+        resource_id=result.id,
+        visit_id=order.visit_id,
+        old_value={"status": "result_ready"},
+        new_value={"status": "verified", "verified_by_user_id": current_user.get("sub")},
+    )
     await session.commit()
     await session.refresh(order)
     return await _enrich_order(order, session)

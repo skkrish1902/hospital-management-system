@@ -21,6 +21,8 @@ from app.models.tenant.nurse_department import NurseDepartment
 from app.models.tenant.queue_token import QueueToken
 from app.models.tenant.visit import Visit, VisitStatus
 from app.schemas.visit import VisitCreate, VisitDispatch, VisitRead, VisitStatusUpdate
+from app.schemas.tat import VisitTATRead
+from app.services.tat import build_visit_tat
 from app.services.visit_workflow import VisitTransitionSource, VisitWorkflowService
 from app.websocket.manager import ws_manager
 
@@ -69,6 +71,7 @@ async def create_visit(
     session: AsyncSession = Depends(get_session),
     current_user: dict = Depends(require_role(*ALLOWED_ROLES)),
 ):
+    now = datetime.now(timezone.utc)
     visit = Visit(
         id=uuid.uuid4(),
         patient_id=payload.patient_id,
@@ -76,6 +79,8 @@ async def create_visit(
         appointment_id=payload.appointment_id,
         department_id=payload.department_id,
         status=VisitStatus.REGISTERED.value,
+        arrived_at=now,
+        registered_at=now,
     )
     session.add(visit)
     await session.commit()
@@ -221,6 +226,38 @@ async def get_visit(
     result.department_name = dept.name if dept else None
     result.doctor_consultation_fee = float(doctor.consultation_fee) if doctor else None
     return result
+
+
+@router.get("/{visit_id}/tat", response_model=VisitTATRead)
+async def get_visit_tat(
+    visit_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    _: dict = Depends(require_role(*ALLOWED_ROLES)),
+):
+    """Return persisted operational timestamps and calculated TAT values."""
+    visit = await session.get(Visit, visit_id)
+    if not visit:
+        raise HTTPException(status_code=404, detail="Visit not found")
+    lab_order = (await session.execute(
+        select(LabOrder).where(LabOrder.visit_id == visit_id).order_by(LabOrder.ordered_at.desc())
+    )).scalars().first()
+    invoice = (await session.execute(
+        select(Invoice).where(Invoice.visit_id == visit_id).order_by(Invoice.created_at.desc())
+    )).scalars().first()
+    pharmacy_queue = None
+    prescription = (await session.execute(
+        select(Prescription).where(Prescription.visit_id == visit_id).order_by(Prescription.created_at.desc())
+    )).scalars().first()
+    if prescription:
+        pharmacy_queue = (await session.execute(
+            select(PharmacyQueue).where(PharmacyQueue.prescription_id == prescription.id)
+        )).scalars().first()
+    return build_visit_tat(
+        visit,
+        lab_order=lab_order,
+        pharmacy_queue=pharmacy_queue,
+        invoice=invoice,
+    )
 
 
 @router.patch("/{visit_id}/status", response_model=VisitRead)

@@ -38,6 +38,11 @@ class LabOrder(Base):
     ordered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    sample_collected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    processing_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    result_ready_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
 class LabResult(Base):

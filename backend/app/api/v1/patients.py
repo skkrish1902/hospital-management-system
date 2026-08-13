@@ -16,7 +16,7 @@ from app.core.dependencies import get_current_user, require_role
 from app.core.sms import send_patient_welcome
 from app.db.engine import get_session, tenant_schema_var
 from app.models.public.user import Tenant
-from app.models.tenant.audit_log import AuditLog
+from app.services.audit_service import record_audit
 from app.models.tenant.consultation import Consultation
 from app.models.tenant.department import Department
 from app.models.tenant.doctor import Doctor
@@ -94,24 +94,16 @@ async def _record_patient_audit(
     action: str,
     old_value: Optional[dict],
     new_value: Optional[dict],
-    user_id: Optional[str],
+    current_user: dict | None,
 ) -> None:
-    changed_by_uuid = None
-    if user_id is not None:
-        try:
-            changed_by_uuid = uuid.UUID(str(user_id))
-        except (TypeError, ValueError):
-            changed_by_uuid = None
-
-    session.add(
-        AuditLog(
-            user_id=changed_by_uuid,
-            action=action,
-            resource_type="patient",
-            resource_id=str(patient_id),
-            old_value=old_value,
-            new_value=new_value,
-        )
+    record_audit(
+        session,
+        current_user=current_user,
+        action=action,
+        resource_type="patient",
+        resource_id=patient_id,
+        old_value=old_value,
+        new_value=new_value,
     )
 
 
@@ -165,7 +157,7 @@ async def register_patient(
             "uhid": patient.uhid,
             "duplicate_override": bool(duplicates and payload.override_duplicate),
         },
-        user_id=current_user.get("sub"),
+        current_user=current_user,
     )
     await session.commit()
 
@@ -261,7 +253,7 @@ async def update_patient(
             action="UPDATE",
             old_value=old_value,
             new_value=new_value,
-            user_id=current_user.get("sub"),
+            current_user=current_user,
         )
 
     await session.commit()
@@ -289,7 +281,7 @@ async def deactivate_patient(
         action="UPDATE",
         old_value={"is_active": True},
         new_value={"is_active": False},
-        user_id=current_user.get("sub"),
+        current_user=current_user,
     )
     await session.commit()
     await session.refresh(patient)
@@ -316,7 +308,7 @@ async def reactivate_patient(
         action="UPDATE",
         old_value={"is_active": False},
         new_value={"is_active": True},
-        user_id=current_user.get("sub"),
+        current_user=current_user,
     )
     await session.commit()
     await session.refresh(patient)

@@ -282,7 +282,21 @@ Results remain linked to the originating Visit.
 
 ---
 
-# 13. Billing
+# 13. Feedback
+
+Feedback is unique per Visit and records:
+
+* rating from 1 to 5
+* comments
+* channel (`qr`, `sms`, `whatsapp`, `kiosk`, or `staff`)
+* submitted timestamp
+* link-sent timestamp
+
+Feedback does not change Visit status.
+
+---
+
+# 14. Billing
 
 Billing lifecycle is independent.
 
@@ -301,7 +315,7 @@ Payment state must never be inferred solely from Visit status.
 
 ---
 
-# 14. Visit Closure
+# 15. Visit Closure
 
 CONSULTATION_COMPLETED means the doctor's clinical consultation is complete.
 
@@ -311,7 +325,7 @@ Closure rules should remain explicit and configurable rather than being implicit
 
 ---
 
-# 15. Cancellation
+# 16. Cancellation
 
 Cancellation must:
 
@@ -327,7 +341,7 @@ Cancellation must not delete the encounter.
 
 ---
 
-# 16. Real-Time Events
+# 17. Real-Time Events
 
 Publish appropriate tenant-isolated events for:
 
@@ -347,7 +361,7 @@ WebSocket events improve UX but do not replace persisted state.
 
 ---
 
-# 17. Operational Metrics
+# 18. Operational Metrics
 
 The workflow must allow calculation of:
 

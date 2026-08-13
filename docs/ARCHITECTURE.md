@@ -284,6 +284,21 @@ Backend remains authoritative.
 
 ---
 
+# 15. Release Surfaces
+
+The stabilized OPD release includes:
+
+* visit-linked feedback
+* nurse roster assignments and attendance
+* semantic TAT timestamps and the visit TAT endpoint
+* tenant-scoped RBAC and feature enforcement
+* audit metadata and secret-safe snapshots
+* Redis-backed tenant-isolated real-time events
+
+See [API.md](API.md), [RBAC_MATRIX.md](RBAC_MATRIX.md), [TENANT_ARCHITECTURE.md](TENANT_ARCHITECTURE.md), [STATE_DIAGRAMS.md](STATE_DIAGRAMS.md), and [DEPLOYMENT.md](DEPLOYMENT.md) for operational contracts.
+
+---
+
 # 15. Audit
 
 Clinical, administrative and financial mutations require traceability.

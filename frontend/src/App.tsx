@@ -8,6 +8,7 @@ import PatientsPage from '@/features/patients/PatientsPage'
 import QueuePage from '@/features/queue/QueuePage'
 import TokenDisplayPage from '@/features/queue/TokenDisplayPage'
 import NurseVitalsPage from '@/features/nurse/NurseVitalsPage'
+import RosterPage from '@/features/nurse/RosterPage'
 import ConsultationPage from '@/features/doctor/ConsultationPage'
 import PrescriptionPage from '@/features/doctor/PrescriptionPage'
 import BillingPage from '@/features/billing/BillingPage'
@@ -35,7 +36,6 @@ const RECEPTION = ['receptionist', ...ADMIN]
 const CLINICAL = ['receptionist', 'nurse', 'doctor', ...ADMIN]
 const ALL_STAFF = ['hospital_admin', 'receptionist', 'nurse', 'doctor', 'lab_technician', 'pharmacist', 'billing_officer', 'store_manager']
 
-// Remaining placeholder pages
 function Dashboard() {
   const role = useAuthStore((s) => s.user?.role ?? '')
   if (role === 'doctor') return <Navigate to="/doctor/consultation" replace />
@@ -48,7 +48,6 @@ function Dashboard() {
   if (role === 'super_admin') return <Navigate to="/super/hospitals" replace />
   return <div className="p-6"><h1 className="text-2xl font-semibold">Command Center</h1></div>
 }
-const RosterPage = () => <div className="p-6"><h1 className="text-2xl font-semibold">Nurse Roster</h1></div>
 
 function SessionExpiredModal() {
   const { sessionExpired, logout } = useAuthStore()

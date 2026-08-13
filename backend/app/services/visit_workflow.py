@@ -7,7 +7,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.tenant.audit_log import AuditLog
+from app.db.engine import tenant_schema_var
+from app.services.audit_service import record_audit
 
 
 class VisitStatus(StrEnum):
@@ -90,30 +91,40 @@ class VisitWorkflowService:
             )
 
         visit.status = next_status.value
-        if next_status in {VisitStatus.CLOSED, VisitStatus.CANCELLED}:
-            visit.closed_at = datetime.now(timezone.utc)
-
-        changed_by_uuid = None
-        if changed_by is not None:
-            try:
-                changed_by_uuid = uuid.UUID(str(changed_by))
-            except (TypeError, ValueError):
-                changed_by_uuid = None
-
         timestamp = datetime.now(timezone.utc)
-        session.add(
-            AuditLog(
-                user_id=changed_by_uuid,
-                action="UPDATE",
-                resource_type="visit_state",
-                resource_id=str(visit.id),
-                old_value={"status": previous_status.value},
-                new_value={
-                    "status": next_status.value,
-                    "changed_by": str(changed_by) if changed_by is not None else None,
-                    "source": str(source),
-                    "timestamp": timestamp.isoformat(),
-                },
-            )
+        if next_status == VisitStatus.WAITING_FOR_NURSE:
+            visit.nurse_queue_at = getattr(visit, "nurse_queue_at", None) or timestamp
+        elif next_status == VisitStatus.IN_PRE_VITAL:
+            visit.nurse_called_at = getattr(visit, "nurse_called_at", None) or timestamp
+            visit.pre_vital_started_at = getattr(visit, "pre_vital_started_at", None) or timestamp
+        elif next_status == VisitStatus.WAITING_FOR_DOCTOR:
+            visit.pre_vital_completed_at = getattr(visit, "pre_vital_completed_at", None) or timestamp
+            visit.doctor_queue_at = getattr(visit, "doctor_queue_at", None) or timestamp
+        elif next_status == VisitStatus.IN_CONSULTATION:
+            visit.doctor_called_at = getattr(visit, "doctor_called_at", None) or timestamp
+            visit.consultation_started_at = getattr(visit, "consultation_started_at", None) or timestamp
+        elif next_status == VisitStatus.CONSULTATION_COMPLETED:
+            visit.consultation_completed_at = getattr(visit, "consultation_completed_at", None) or timestamp
+        if next_status in {VisitStatus.CLOSED, VisitStatus.CANCELLED}:
+            visit.closed_at = timestamp
+
+        record_audit(
+            session,
+            current_user={
+                "sub": changed_by,
+                "role": str(source).lower(),
+                "tenant_schema": tenant_schema_var.get(),
+            },
+            action="UPDATE",
+            resource_type="visit_state",
+            resource_id=visit.id,
+            visit_id=visit.id,
+            old_value={"status": previous_status.value},
+            new_value={
+                "status": next_status.value,
+                "changed_by": str(changed_by) if changed_by is not None else None,
+                "source": str(source),
+                "timestamp": timestamp.isoformat(),
+            },
         )
         return visit

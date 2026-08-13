@@ -51,7 +51,7 @@ services:
     env_file:
       - ../.env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_DB_URL_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-hospital_user}:${POSTGRES_DB_URL_PASSWORD:-hospital_pass}@postgres:5432/${POSTGRES_DB:-hospital}
       REDIS_URL: redis://redis:6379
     volumes:
       - ../backend:/app

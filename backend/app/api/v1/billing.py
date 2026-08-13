@@ -21,6 +21,7 @@ from app.models.tenant.pharmacy_queue import PharmacyQueue
 from app.models.tenant.visit import Visit, VisitStatus
 from app.schemas.invoice import InvoiceCreate, InvoicePayment, InvoiceRead, PaymentRead, RefundCreate
 from app.services.visit_workflow import VisitTransitionSource, VisitWorkflowService
+from app.services.audit_service import record_audit
 from app.websocket.manager import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,12 @@ def _compute_totals(line_items: list | None, discount: float, tax: float) -> flo
     return subtotal, max(total, 0.0)
 
 
-async def _record_payment(invoice: Invoice, payload: InvoicePayment, session: AsyncSession) -> Payment:
+async def _record_payment(
+    invoice: Invoice,
+    payload: InvoicePayment,
+    session: AsyncSession,
+    current_user: dict | None = None,
+) -> Payment:
     if invoice.status in ("cancelled", "refunded", "paid"):
         raise HTTPException(status_code=400, detail=f"Invoice already {invoice.status}")
     amount = payload.amount if payload.amount is not None else invoice.balance
@@ -104,7 +110,22 @@ async def _record_payment(invoice: Invoice, payload: InvoicePayment, session: As
     invoice.status = invoice_status_for_payment(float(invoice.total), float(invoice.paid_amount))
     if invoice.status == "paid":
         invoice.paid_at = payment.paid_at
+        invoice.billing_completed_at = payment.paid_at
         invoice.receipt_number = invoice.receipt_number or f"RCT-{datetime.now(timezone.utc):%Y%m%d}-{str(invoice.id)[:8].upper()}"
+    record_audit(
+        session,
+        current_user=current_user,
+        action="CREATE",
+        resource_type="payment",
+        resource_id=payment.id,
+        visit_id=invoice.visit_id,
+        new_value={
+            "invoice_id": invoice.id,
+            "amount": amount,
+            "payment_method": payload.payment_method,
+            "status": invoice.status,
+        },
+    )
     return payment
 
 
@@ -140,7 +161,24 @@ async def create_invoice(
         total=total,
         status="draft",
     )
+    invoice.billing_started_at = datetime.now(timezone.utc)
     session.add(invoice)
+    record_audit(
+        session,
+        current_user=current_user,
+        action="CREATE",
+        resource_type="invoice",
+        resource_id=invoice.id,
+        visit_id=invoice.visit_id,
+        new_value={
+            "line_items": li_dicts,
+            "subtotal": subtotal,
+            "discount": payload.discount,
+            "tax": payload.tax,
+            "total": total,
+            "status": invoice.status,
+        },
+    )
 
     # Billing is a separate downstream workflow; it does not mutate OPD visit state.
 
@@ -173,7 +211,7 @@ async def pay_invoice(
     invoice = await session.get(Invoice, invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    await _record_payment(invoice, payload, session)
+    await _record_payment(invoice, payload, session, current_user)
 
     # Transition visit based on billing type:
     # pre_billing (upfront at reception) → registered (now visible to nurse)
@@ -215,7 +253,7 @@ async def record_invoice_payment(
     invoice = await session.get(Invoice, invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    payment = await _record_payment(invoice, payload, session)
+    payment = await _record_payment(invoice, payload, session, _)
     await session.commit()
     await session.refresh(payment)
     return payment
@@ -267,6 +305,17 @@ async def refund_invoice(
         reason=payload.reason, refunded_at=datetime.now(timezone.utc),
     ))
     invoice.status = "refunded"
+    record_audit(
+        session,
+        current_user=_,
+        action="REFUND",
+        resource_type="invoice",
+        resource_id=invoice.id,
+        visit_id=invoice.visit_id,
+        old_value={"status": "paid", "paid_amount": invoice.paid_amount},
+        new_value={"status": "refunded", "refund_amount": invoice.paid_amount},
+        reason=payload.reason,
+    )
     await session.commit()
     await session.refresh(invoice)
     return invoice

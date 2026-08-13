@@ -4,11 +4,13 @@ from app.api.v1.admin import router as admin_router
 from app.api.v1.appointments import router as appointments_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.billing import router as billing_router, webhook_router as billing_webhook_router
+from app.api.v1.feedback import router as feedback_router
 from app.api.v1.consultations import router as consultations_router
 from app.api.v1.departments import router as departments_router
 from app.api.v1.doctors import router as doctors_router
 from app.api.v1.lab import router as lab_router
 from app.api.v1.nurse_departments import router as nurse_departments_router
+from app.api.v1.nurse_roster import router as nurse_roster_router
 from app.api.v1.patients import router as patients_router
 from app.api.v1.pharmacy import router as pharmacy_router
 from app.api.v1.prescriptions import router as prescriptions_router
@@ -44,7 +46,9 @@ api_router.include_router(consultations_router, prefix="/consultations", tags=["
 api_router.include_router(prescriptions_router, prefix="/prescriptions", tags=["prescriptions"], **_tenant_guard)
 api_router.include_router(billing_router, prefix="/billing", tags=["billing"], **_tenant_guard)
 api_router.include_router(billing_webhook_router, prefix="/billing", tags=["billing"])  # no guard — Razorpay webhook
+api_router.include_router(feedback_router, prefix="/feedback", tags=["feedback"], **_tenant_guard)
 api_router.include_router(nurse_departments_router, prefix="/nurse-departments", tags=["nurse-departments"], **_tenant_guard)
+api_router.include_router(nurse_roster_router, prefix="/nurse-roster", tags=["nurse-roster"], **_tenant_guard)
 api_router.include_router(pharmacy_router, prefix="/pharmacy", tags=["pharmacy"], **_tenant_guard)
 api_router.include_router(lab_router, prefix="/lab", tags=["lab"], **_tenant_guard)
 api_router.include_router(requisitions_router, prefix="/indents", tags=["indents"], **_tenant_guard)
