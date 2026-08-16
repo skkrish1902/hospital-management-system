@@ -8,6 +8,7 @@ from pydantic import BaseModel
 class PharmacyQueueRead(BaseModel):
     id: uuid.UUID
     prescription_id: uuid.UUID
+    patient_id: Optional[uuid.UUID] = None
     visit_id: Optional[uuid.UUID] = None
     status: str
     notes: Optional[str] = None

@@ -28,7 +28,7 @@ from app.websocket.manager import ws_manager
 
 router = APIRouter()
 
-ALLOWED_ROLES = ("receptionist", "nurse", "doctor", "billing_officer", "hospital_admin", "super_admin")
+ALLOWED_ROLES = ("receptionist", "nurse", "doctor", "billing_officer", "hospital_admin")
 
 
 async def _complete_queue_token(visit: Visit, session: AsyncSession) -> None:

@@ -20,7 +20,7 @@ export type Gender = 'male' | 'female' | 'other'
 
 export type QueueType = 'registration' | 'vitals' | 'consultation' | 'pharmacy' | 'billing'
 
-export type QueuePriority = 'emergency' | 'senior_citizen' | 'normal'
+export type QueuePriority = 'emergency' | 'urgent' | 'pregnant' | 'disabled' | 'senior_citizen' | 'normal'
 
 export type QueueStatus = 'waiting' | 'called' | 'in_progress' | 'completed' | 'skipped' | 'checked_in' | 'cancelled'
 
@@ -113,6 +113,9 @@ export interface QueueToken {
   token_no: number
   queue_type: QueueType
   priority: QueuePriority
+  priority_reason?: string
+  priority_assigned_by?: UUID
+  priority_assigned_at?: string
   status: QueueStatus
   notes?: string
   issued_at: string
@@ -124,6 +127,19 @@ export interface QueueToken {
   patient_phone?: string
   department_name?: string
   doctor_name?: string
+}
+
+export interface QueueStageSummary {
+  waiting_count: number
+  breached_count: number
+  longest_wait_seconds?: number
+  sla_threshold_seconds: number
+}
+
+export interface QueueSummary {
+  as_of: string
+  waiting_for_nurse: QueueStageSummary
+  waiting_for_doctor: QueueStageSummary
 }
 
 export interface Visit {
@@ -297,12 +313,24 @@ export interface LabResult {
 export interface PharmacyQueueItem {
   id: UUID
   prescription_id: UUID
+  patient_id?: UUID
   visit_id?: UUID
   status: 'pending' | 'preparing' | 'ready' | 'partial' | 'dispensed' | 'cancelled'
   notes?: string
   updated_at: string
   patient_name?: string
   medicines?: { name: string; dose: string; frequency: string; duration: string; route: string }[]
+}
+
+export interface ClinicalAlert {
+  id: UUID
+  patient_id: UUID
+  alert_type: 'allergy' | 'clinical' | string
+  severity: 'critical' | 'high' | 'medium' | 'low' | string
+  description: string
+  is_active: boolean
+  created_at: string
+  resolved_at?: string
 }
 
 export interface AppointmentSlot {

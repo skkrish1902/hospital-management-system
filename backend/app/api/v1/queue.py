@@ -17,6 +17,7 @@ from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import ensure_feature_enabled, get_current_user, require_role, require_feature
+from app.core.config import settings
 from app.core.razorpay_service import create_razorpay_order
 from app.db.engine import get_session
 from app.models.tenant.department import Department
@@ -26,12 +27,29 @@ from app.models.tenant.patient import Patient
 from app.models.tenant.queue_token import QueueToken
 from app.models.tenant.visit import Visit, VisitStatus
 from app.schemas.queue import CancelTokenRequest, QueueTokenCreate, QueueTokenRead, QueueTokenStatusUpdate, QueueTokenUpdate
+from app.schemas.queue_summary import QueueStageSummary, QueueSummaryRead
+from app.services.audit_service import record_audit
+from app.services.queue_sla import queue_stage_summary
 from app.services.visit_workflow import VisitTransitionSource, VisitWorkflowService
 from app.websocket.manager import ws_manager
 
 router = APIRouter(dependencies=[Depends(require_feature("opd_queue"))])
 
-_PRIORITY_ORDER = {"emergency": 0, "senior_citizen": 1, "normal": 2}
+_PRIORITY_ORDER = {
+    "emergency": 0,
+    "urgent": 1,
+    "pregnant": 2,
+    "disabled": 3,
+    "senior_citizen": 4,
+    "normal": 5,
+}
+
+
+def _user_uuid(user_id: object) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(user_id)) if user_id is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 async def _next_token_no(
@@ -57,7 +75,7 @@ async def _next_token_no(
 async def issue_token(
     payload: QueueTokenCreate,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("receptionist", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("receptionist", "hospital_admin")),
 ):
     patient = await session.get(Patient, payload.patient_id)
     if not patient:
@@ -75,10 +93,26 @@ async def issue_token(
         token_no=token_no,
         queue_type=payload.queue_type,
         priority=payload.priority,
+        priority_reason=payload.priority_reason,
+        priority_assigned_by=_user_uuid(current_user.get("sub")),
+        priority_assigned_at=now,
         status="checked_in",
         called_at=now,
     )
     session.add(token)
+    if payload.priority != "normal" or payload.priority_reason:
+        record_audit(
+            session,
+            current_user=current_user,
+            action="CREATE",
+            resource_type="queue_priority",
+            resource_id=token.id,
+            new_value={
+                "priority": payload.priority,
+                "reason": payload.priority_reason,
+                "assigned_at": now,
+            },
+        )
 
     # --- Determine consultation fee and whether to request upfront payment ---
     doctor = await session.get(Doctor, payload.doctor_id) if payload.doctor_id else None
@@ -219,7 +253,7 @@ async def list_queue(
     department_id: Optional[uuid.UUID] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
     session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_role("receptionist", "nurse", "doctor", "hospital_admin", "super_admin")),
+    _: dict = Depends(require_role("receptionist", "nurse", "doctor", "hospital_admin")),
 ):
     """Returns today's queue, sorted by priority then token_no."""
     today_start = datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=timezone.utc)
@@ -239,8 +273,11 @@ async def list_queue(
     stmt = stmt.order_by(
         case(
             (QueueToken.priority == "emergency", 0),
-            (QueueToken.priority == "senior_citizen", 1),
-            else_=2,
+            (QueueToken.priority == "urgent", 1),
+            (QueueToken.priority == "pregnant", 2),
+            (QueueToken.priority == "disabled", 3),
+            (QueueToken.priority == "senior_citizen", 4),
+            else_=5,
         ),
         QueueToken.token_no,
     )
@@ -261,12 +298,40 @@ async def list_queue(
     return items
 
 
+@router.get("/summary", response_model=QueueSummaryRead)
+async def queue_summary(
+    session: AsyncSession = Depends(get_session),
+    _: dict = Depends(require_role("receptionist", "nurse", "doctor", "hospital_admin")),
+):
+    visits = (await session.execute(
+        select(Visit).where(
+            Visit.status.in_([
+                VisitStatus.WAITING_FOR_NURSE.value,
+                VisitStatus.WAITING_FOR_DOCTOR.value,
+            ])
+        )
+    )).scalars().all()
+    return QueueSummaryRead(
+        as_of=datetime.now(timezone.utc).isoformat(),
+        waiting_for_nurse=QueueStageSummary(**queue_stage_summary(
+            [visit for visit in visits if visit.status == VisitStatus.WAITING_FOR_NURSE.value],
+            queue_timestamp="nurse_queue_at",
+            threshold_seconds=settings.QUEUE_SLA_NURSE_MINUTES * 60,
+        )),
+        waiting_for_doctor=QueueStageSummary(**queue_stage_summary(
+            [visit for visit in visits if visit.status == VisitStatus.WAITING_FOR_DOCTOR.value],
+            queue_timestamp="doctor_queue_at",
+            threshold_seconds=settings.QUEUE_SLA_DOCTOR_MINUTES * 60,
+        )),
+    )
+
+
 @router.patch("/{token_id}", response_model=QueueTokenRead)
 async def edit_token(
     token_id: uuid.UUID,
     payload: QueueTokenUpdate,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("receptionist", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("receptionist", "hospital_admin")),
 ):
     """Edit department, doctor, or priority on a checked_in token."""
     token = await session.get(QueueToken, token_id)
@@ -280,7 +345,21 @@ async def edit_token(
     if payload.doctor_id is not None:
         token.doctor_id = payload.doctor_id
     if payload.priority is not None:
+        previous_priority = token.priority
         token.priority = payload.priority
+        token.priority_reason = payload.priority_reason
+        token.priority_assigned_by = _user_uuid(current_user.get("sub"))
+        token.priority_assigned_at = datetime.now(timezone.utc)
+        if previous_priority != payload.priority or payload.priority_reason:
+            record_audit(
+                session,
+                current_user=current_user,
+                action="UPDATE",
+                resource_type="queue_priority",
+                resource_id=token.id,
+                old_value={"priority": previous_priority},
+                new_value={"priority": payload.priority, "reason": payload.priority_reason},
+            )
 
     await session.commit()
     await session.refresh(token)
@@ -311,7 +390,7 @@ async def cancel_token(
     token_id: uuid.UUID,
     payload: CancelTokenRequest,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("receptionist", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("receptionist", "hospital_admin")),
 ):
     """Cancel a checked_in token. Notes are mandatory."""
     token = await session.get(QueueToken, token_id)
@@ -355,8 +434,8 @@ async def cancel_token(
                 current_user.get("sub"),
                 VisitTransitionSource.CANCELLED,
             )
-        except ValueError:
-            visit.closed_at = now
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=f"Cannot cancel visit: {str(exc)}") from exc
 
     await session.commit()
     await session.refresh(token)
@@ -386,7 +465,7 @@ async def update_token_status(
     token_id: uuid.UUID,
     payload: QueueTokenStatusUpdate,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("receptionist", "nurse", "doctor", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("receptionist", "nurse", "doctor", "hospital_admin")),
 ):
     """Internal status transitions used by nurse/doctor flows to mark completed."""
     token = await session.get(QueueToken, token_id)

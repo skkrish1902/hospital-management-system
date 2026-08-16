@@ -6,6 +6,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.billing import router as billing_router, webhook_router as billing_webhook_router
 from app.api.v1.feedback import router as feedback_router
 from app.api.v1.consultations import router as consultations_router
+from app.api.v1.clinical_alerts import router as clinical_alerts_router
 from app.api.v1.departments import router as departments_router
 from app.api.v1.doctors import router as doctors_router
 from app.api.v1.lab import router as lab_router
@@ -43,6 +44,7 @@ api_router.include_router(queue_router, prefix="/queue", tags=["queue"], **_tena
 api_router.include_router(visits_router, prefix="/visits", tags=["visits"], **_tenant_guard)
 api_router.include_router(vitals_router, prefix="/vitals", tags=["vitals"], **_tenant_guard)
 api_router.include_router(consultations_router, prefix="/consultations", tags=["consultations"], **_tenant_guard)
+api_router.include_router(clinical_alerts_router, prefix="/clinical-alerts", tags=["clinical-alerts"], **_tenant_guard)
 api_router.include_router(prescriptions_router, prefix="/prescriptions", tags=["prescriptions"], **_tenant_guard)
 api_router.include_router(billing_router, prefix="/billing", tags=["billing"], **_tenant_guard)
 api_router.include_router(billing_webhook_router, prefix="/billing", tags=["billing"])  # no guard — Razorpay webhook

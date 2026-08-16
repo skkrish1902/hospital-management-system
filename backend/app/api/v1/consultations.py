@@ -27,7 +27,7 @@ router = APIRouter()
 async def create_consultation(
     payload: ConsultationCreate,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("doctor", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("doctor", "hospital_admin")),
 ):
     visit = await session.get(Visit, payload.visit_id)
     if not visit:
@@ -98,8 +98,8 @@ async def create_consultation(
                 current_user.get("sub"),
                 VisitTransitionSource.DOCTOR,
             )
-        except ValueError:
-            pass
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=f"Cannot start consultation: {str(exc)}") from exc
 
     if consult.status == "completed":
         try:
@@ -110,8 +110,8 @@ async def create_consultation(
                 current_user.get("sub"),
                 VisitTransitionSource.DOCTOR,
             )
-        except ValueError:
-            pass
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=f"Cannot complete consultation: {str(exc)}") from exc
 
     record_audit(
         session,
@@ -132,7 +132,7 @@ async def update_consultation(
     visit_id: uuid.UUID,
     payload: ConsultationUpdate,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("doctor", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("doctor", "hospital_admin")),
 ):
     consult = (await session.execute(
         select(Consultation).where(Consultation.visit_id == visit_id)
@@ -221,7 +221,7 @@ async def update_consultation(
 async def get_consultation(
     visit_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_role("doctor", "nurse", "pharmacist", "hospital_admin", "super_admin")),
+    _: dict = Depends(require_role("doctor", "nurse", "pharmacist", "hospital_admin")),
 ):
     consult = (await session.execute(
         select(Consultation).where(Consultation.visit_id == visit_id)

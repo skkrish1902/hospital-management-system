@@ -1,5 +1,5 @@
 import apiClient from './apiClient'
-import type { QueueToken } from '@/types/common'
+import type { QueueSummary, QueueToken } from '@/types/common'
 
 export interface QueueTokenCreate {
   patient_id: string
@@ -8,6 +8,7 @@ export interface QueueTokenCreate {
   doctor_id?: string
   queue_type?: string
   priority?: string
+  priority_reason?: string
   waive_fee?: boolean
 }
 
@@ -15,11 +16,14 @@ export interface QueueTokenUpdate {
   department_id?: string
   doctor_id?: string
   priority?: string
+  priority_reason?: string
 }
 
 export const queueService = {
   list: (params?: { queue_type?: string; department_id?: string; status?: string }) =>
     apiClient.get<QueueToken[]>('/queue', { params }).then(r => r.data),
+
+  summary: () => apiClient.get<QueueSummary>('/queue/summary').then(r => r.data),
 
   issue: (data: QueueTokenCreate) =>
     apiClient.post<QueueToken>('/queue', data).then(r => r.data),

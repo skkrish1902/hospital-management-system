@@ -13,6 +13,9 @@ from app.models.tenant.invoice import Invoice, Payment, Refund
 from app.models.tenant.feedback import Feedback
 from app.models.tenant.nurse_roster import NurseRoster
 from app.models.tenant.nurse_department import NurseDepartment
+from app.models.tenant.doctor_schedule import DoctorSchedule
+from app.models.tenant.doctor_schedule_exception import DoctorScheduleException
+from app.models.tenant.clinical_alert import ClinicalAlert
 from app.models.tenant.audit_log import AuditLog
 
 __all__ = [
@@ -34,5 +37,8 @@ __all__ = [
     "Refund",
     "Feedback",
     "NurseRoster",
+    "DoctorSchedule",
+    "DoctorScheduleException",
+    "ClinicalAlert",
     "AuditLog",
 ]

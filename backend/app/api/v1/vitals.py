@@ -23,7 +23,7 @@ router = APIRouter(dependencies=[Depends(require_feature("vitals"))])
 async def record_vitals(
     payload: VitalsCreate,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("nurse", "doctor", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("nurse", "doctor", "hospital_admin")),
 ):
     visit = await session.get(Visit, payload.visit_id)
     if not visit:

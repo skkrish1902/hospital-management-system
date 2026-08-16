@@ -10,6 +10,9 @@ import type { Doctor, Patient, QueueToken, Invoice } from '@/types/common'
 
 const PRIORITY_BADGE: Record<string, string> = {
   emergency: 'bg-red-100 text-red-700',
+  urgent: 'bg-orange-100 text-orange-700',
+  pregnant: 'bg-pink-100 text-pink-700',
+  disabled: 'bg-indigo-100 text-indigo-700',
   senior_citizen: 'bg-yellow-100 text-yellow-700',
   normal: 'bg-gray-100 text-gray-600',
 }
@@ -27,6 +30,7 @@ export default function QueuePage() {
   const [patientSearch, setPatientSearch] = useState('')
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
   const [priority, setPriority] = useState('normal')
+  const [priorityReason, setPriorityReason] = useState('')
   const [selectedDeptId, setSelectedDeptId] = useState<string>('')
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>('')
   const [filterDeptId, setFilterDeptId] = useState<string>('')
@@ -40,6 +44,7 @@ export default function QueuePage() {
   const [editDeptId, setEditDeptId] = useState<string>('')
   const [editDoctorId, setEditDoctorId] = useState<string>('')
   const [editPriority, setEditPriority] = useState<string>('')
+  const [editPriorityReason, setEditPriorityReason] = useState('')
 
   const [showRegisterModal, setShowRegisterModal] = useState(false)
 
@@ -59,6 +64,12 @@ export default function QueuePage() {
   const { data: tokens = [], refetch } = useQuery<QueueToken[]>({
     queryKey: ['queue', filterDeptId],
     queryFn: () => queueService.list({ department_id: filterDeptId || undefined }),
+    refetchInterval: 30_000,
+  })
+
+  const { data: queueSummary } = useQuery({
+    queryKey: ['queue-summary'],
+    queryFn: () => queueService.summary(),
     refetchInterval: 30_000,
   })
 
@@ -113,6 +124,7 @@ export default function QueuePage() {
     setSelectedPatient(null)
     setPatientSearch('')
     setPriority('normal')
+    setPriorityReason('')
     setSelectedDeptId('')
     setSelectedDoctorId('')
     setWaiveFee(false)
@@ -126,6 +138,7 @@ export default function QueuePage() {
       department_id: selectedDeptId || undefined,
       doctor_id: selectedDoctorId || undefined,
       priority,
+      priority_reason: priorityReason || undefined,
       waive_fee: waiveFee,
     }),
     onSuccess: (token) => {
@@ -145,6 +158,7 @@ export default function QueuePage() {
       department_id: editDeptId || undefined,
       doctor_id: editDoctorId || undefined,
       priority: editPriority || undefined,
+      priority_reason: editPriorityReason || undefined,
     }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['queue'] }); setEditToken(null) },
   })
@@ -194,6 +208,7 @@ export default function QueuePage() {
     setEditDeptId(token.department_id ?? '')
     setEditDoctorId(token.doctor_id ?? '')
     setEditPriority(token.priority)
+    setEditPriorityReason(token.priority_reason ?? '')
   }
 
   const openCancel = (token: QueueToken) => {
@@ -238,11 +253,18 @@ export default function QueuePage() {
       )}
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard label="Checked In" value={checkedIn} color="blue" />
         <StatCard label="Completed" value={completed} color="green" />
         <StatCard label="Cancelled" value={cancelled} color="red" />
       </div>
+
+      {queueSummary && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <QueueSlaCard label="Waiting for Nurse" summary={queueSummary.waiting_for_nurse} />
+          <QueueSlaCard label="Waiting for Doctor" summary={queueSummary.waiting_for_doctor} />
+        </div>
+      )}
 
       {/* Token table — active only */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -512,8 +534,17 @@ export default function QueuePage() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
                   <option value="normal">Normal</option>
                   <option value="senior_citizen">Senior Citizen</option>
+                  <option value="pregnant">Pregnant</option>
+                  <option value="disabled">Disabled</option>
+                  <option value="urgent">Urgent</option>
                   <option value="emergency">Emergency</option>
                 </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Priority reason</label>
+                <input value={priorityReason} onChange={e => setPriorityReason(e.target.value)}
+                  placeholder="Reason for priority assignment"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
               </div>
 
               {departments.length > 0 && (
@@ -709,8 +740,17 @@ export default function QueuePage() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
                   <option value="normal">Normal</option>
                   <option value="senior_citizen">Senior Citizen</option>
+                  <option value="pregnant">Pregnant</option>
+                  <option value="disabled">Disabled</option>
+                  <option value="urgent">Urgent</option>
                   <option value="emergency">Emergency</option>
                 </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Priority reason</label>
+                <input value={editPriorityReason} onChange={e => setEditPriorityReason(e.target.value)}
+                  placeholder="Reason for priority assignment"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Department</label>
@@ -857,6 +897,35 @@ function StatCard({ label, value, color }: { label: string; value: number | stri
     <div className="bg-white border border-gray-200 rounded-xl p-4">
       <p className="text-xs text-gray-500 mb-1">{label}</p>
       <p className={`text-3xl font-bold ${colorMap[color] || ''} rounded-lg px-2 py-0.5 inline-block`}>{value}</p>
+    </div>
+  )
+}
+
+function QueueSlaCard({
+  label,
+  summary,
+}: {
+  label: string
+  summary: { waiting_count: number; breached_count: number; longest_wait_seconds?: number; sla_threshold_seconds: number }
+}) {
+  const longestMinutes = summary.longest_wait_seconds == null
+    ? '—'
+    : `${Math.floor(summary.longest_wait_seconds / 60)} min`
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-gray-800">{label}</p>
+        {summary.breached_count > 0 && (
+          <span className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">
+            {summary.breached_count} breached
+          </span>
+        )}
+      </div>
+      <div className="flex items-end gap-6 mt-3">
+        <div><p className="text-xs text-gray-500">Waiting</p><p className="text-2xl font-bold text-gray-900">{summary.waiting_count}</p></div>
+        <div><p className="text-xs text-gray-500">Longest</p><p className="text-lg font-semibold text-gray-700">{longestMinutes}</p></div>
+        <div><p className="text-xs text-gray-500">SLA</p><p className="text-lg font-semibold text-gray-700">{Math.floor(summary.sla_threshold_seconds / 60)} min</p></div>
+      </div>
     </div>
   )
 }

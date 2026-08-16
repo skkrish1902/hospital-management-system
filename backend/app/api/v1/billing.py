@@ -58,7 +58,7 @@ webhook_router = APIRouter()
 
 @router.get("/public-config")
 async def public_billing_config(
-    _: dict = Depends(require_role("pharmacist", "receptionist", "billing_officer", "nurse", "hospital_admin", "super_admin")),
+    _: dict = Depends(require_role("pharmacist", "receptionist", "billing_officer", "nurse", "hospital_admin")),
 ):
     """Returns public Razorpay key ID so the frontend can open checkout."""
     return {"razorpay_key_id": settings.RAZORPAY_KEY_ID}
@@ -68,7 +68,7 @@ async def public_billing_config(
 async def list_invoices(
     visit_id: uuid.UUID | None = None,
     session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_role("receptionist", "billing_officer", "hospital_admin", "super_admin")),
+    _: dict = Depends(require_role("receptionist", "billing_officer", "hospital_admin")),
 ):
     stmt = select(Invoice).order_by(Invoice.created_at.desc())
     if visit_id:
@@ -133,7 +133,7 @@ async def _record_payment(
 async def create_invoice(
     payload: InvoiceCreate,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("receptionist", "billing_officer", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("receptionist", "billing_officer", "hospital_admin")),
 ):
     visit = await session.get(Visit, payload.visit_id)
     if not visit:
@@ -191,7 +191,7 @@ async def create_invoice(
 async def get_invoice_by_visit(
     visit_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_role("receptionist", "billing_officer", "nurse", "doctor", "hospital_admin", "super_admin")),
+    _: dict = Depends(require_role("receptionist", "billing_officer", "nurse", "doctor", "hospital_admin")),
 ):
     invoice = (await session.execute(
         select(Invoice).where(Invoice.visit_id == visit_id)
@@ -206,7 +206,7 @@ async def pay_invoice(
     invoice_id: uuid.UUID,
     payload: InvoicePayment,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("receptionist", "billing_officer", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("receptionist", "billing_officer", "hospital_admin")),
 ):
     invoice = await session.get(Invoice, invoice_id)
     if not invoice:
@@ -248,7 +248,7 @@ async def record_invoice_payment(
     invoice_id: uuid.UUID,
     payload: InvoicePayment,
     session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_role("receptionist", "billing_officer", "hospital_admin", "super_admin")),
+    _: dict = Depends(require_role("receptionist", "billing_officer", "hospital_admin")),
 ):
     invoice = await session.get(Invoice, invoice_id)
     if not invoice:
@@ -263,7 +263,7 @@ async def record_invoice_payment(
 async def list_invoice_payments(
     invoice_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_role("receptionist", "billing_officer", "hospital_admin", "super_admin")),
+    _: dict = Depends(require_role("receptionist", "billing_officer", "hospital_admin")),
 ):
     if not await session.get(Invoice, invoice_id):
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -276,7 +276,7 @@ async def list_invoice_payments(
 async def get_invoice_receipt(
     invoice_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_role("receptionist", "billing_officer", "nurse", "doctor", "hospital_admin", "super_admin")),
+    _: dict = Depends(require_role("receptionist", "billing_officer", "nurse", "hospital_admin")),
 ):
     invoice = await session.get(Invoice, invoice_id)
     if not invoice:
@@ -291,7 +291,7 @@ async def refund_invoice(
     invoice_id: uuid.UUID,
     payload: RefundCreate,
     session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_role("billing_officer", "hospital_admin", "super_admin")),
+    _: dict = Depends(require_role("billing_officer", "hospital_admin")),
 ):
     invoice = await session.get(Invoice, invoice_id)
     if not invoice:
@@ -325,7 +325,7 @@ async def refund_invoice(
 async def sync_razorpay_payment(
     invoice_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("receptionist", "billing_officer", "nurse", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("receptionist", "billing_officer", "nurse", "hospital_admin")),
 ):
     """
     Fallback for missed webhooks (ngrok down, stale URL, etc.).
@@ -361,8 +361,8 @@ async def sync_razorpay_payment(
                 current_user.get("sub"),
                 VisitTransitionSource.SYSTEM,
             )
-        except ValueError:
-            pass
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=f"Cannot close visit after sync payment: {str(exc)}") from exc
 
     await session.commit()
     await session.refresh(invoice)
@@ -382,7 +382,7 @@ async def sync_razorpay_payment(
 async def resend_pos_request(
     invoice_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("receptionist", "nurse", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("receptionist", "nurse", "hospital_admin")),
 ):
     """
     Re-broadcast the Razorpay POS payment request to the kiosk screen.
@@ -468,8 +468,8 @@ async def admit_patient_manually(
                 current_user.get("sub"),
                 VisitTransitionSource.SYSTEM,
             )
-        except ValueError:
-            pass
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=f"Cannot close visit after sync payment: {str(exc)}") from exc
 
     await session.commit()
     await session.refresh(invoice)
@@ -619,8 +619,11 @@ async def razorpay_webhook(request: Request):
                         None,
                         VisitTransitionSource.SYSTEM,
                     )
-                except ValueError:
-                    pass
+                except ValueError as exc:
+                    logger.error(
+                        "Webhook: Failed to close visit after razorpay payment: %s",
+                        str(exc),
+                    )
 
             # If this was a pharmacy dispense invoice, advance the queue
             if invoice.source == "pharmacy" and invoice.pharmacy_queue_id:

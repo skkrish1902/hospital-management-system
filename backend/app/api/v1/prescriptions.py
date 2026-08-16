@@ -26,7 +26,7 @@ router = APIRouter()
 async def create_prescription(
     payload: PrescriptionCreate,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("doctor", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("doctor", "hospital_admin")),
 ):
     visit = await session.get(Visit, payload.visit_id)
     if not visit:
@@ -119,8 +119,8 @@ async def create_prescription(
                 current_user.get("sub"),
                 VisitTransitionSource.DOCTOR,
             )
-        except ValueError:
-            pass
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=f"Cannot complete consultation via prescription: {str(exc)}") from exc
 
     record_audit(
         session,
@@ -216,7 +216,7 @@ async def update_prescription(
 async def get_prescription(
     visit_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_role("doctor", "nurse", "pharmacist", "hospital_admin", "super_admin")),
+    _: dict = Depends(require_role("doctor", "nurse", "pharmacist", "hospital_admin")),
 ):
     rx = (await session.execute(
         select(Prescription).options(selectinload(Prescription.items)).where(Prescription.visit_id == visit_id)

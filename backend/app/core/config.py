@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
 
+    # OPD queue SLA policy, in minutes.
+    QUEUE_SLA_NURSE_MINUTES: int = 15
+    QUEUE_SLA_DOCTOR_MINUTES: int = 20
+
     # CORS
     ALLOWED_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
 

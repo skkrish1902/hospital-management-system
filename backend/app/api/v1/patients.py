@@ -37,8 +37,8 @@ from app.schemas.patient import (
 
 router = APIRouter()
 
-ALLOWED_ROLES = ("receptionist", "hospital_admin", "super_admin", "doctor", "nurse")
-STATUS_ROLES = ("receptionist", "hospital_admin", "super_admin")
+ALLOWED_ROLES = ("receptionist", "hospital_admin", "doctor", "nurse")
+STATUS_ROLES = ("receptionist", "hospital_admin")
 _UHID_GENERATION_ATTEMPTS = 5
 
 

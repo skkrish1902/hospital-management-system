@@ -1,5 +1,5 @@
 #!/bin/sh
-set -e
+set -eu
 
 echo "→ Running Alembic migrations..."
 alembic upgrade head

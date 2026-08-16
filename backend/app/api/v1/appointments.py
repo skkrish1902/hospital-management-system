@@ -6,17 +6,21 @@ Check-in flow:
              → broadcasts queue:update → marks appointment checked_in
 """
 import uuid
+import asyncio
+import threading
 from datetime import date, datetime, time, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_role, require_feature
 from app.db.engine import get_session
 from app.models.tenant.appointment import Appointment
 from app.models.tenant.doctor import Doctor
+from app.models.tenant.doctor_schedule import DoctorSchedule
+from app.models.tenant.doctor_schedule_exception import DoctorScheduleException
 from app.models.tenant.invoice import Invoice
 from app.models.tenant.patient import Patient
 from app.models.tenant.queue_token import QueueToken
@@ -38,23 +42,100 @@ from app.websocket.manager import ws_manager
 
 router = APIRouter(dependencies=[Depends(require_feature("appointments"))])
 
-# Clinic operating hours — slots are generated in IST (UTC+5:30) and stored as UTC.
-_SLOT_DURATION_MINUTES = 15
-_DAY_START_HOUR = 9   # 09:00 IST
-_DAY_END_HOUR = 17    # 17:00 IST
 _VALID_CHECK_IN_STATUSES = {"scheduled", "confirmed"}
 _IST = timezone(timedelta(hours=5, minutes=30))
+_DAY_START_HOUR = 0
+_DAY_END_HOUR = 23
+_BOOKING_SLOT_LOCKS: dict[str, asyncio.Lock] = {}
+_BOOKING_SLOT_LOCKS_GUARD = threading.Lock()
 
 
-def _build_slot_times(target_date: date) -> List[datetime]:
-    """Generate all 15-min slot datetimes for a given calendar date in IST, stored as UTC."""
-    slots = []
-    current = datetime.combine(target_date, time(_DAY_START_HOUR, 0), tzinfo=_IST)
-    end = datetime.combine(target_date, time(_DAY_END_HOUR, 0), tzinfo=_IST)
-    while current < end:
-        slots.append(current.astimezone(timezone.utc))
-        current += timedelta(minutes=_SLOT_DURATION_MINUTES)
+def _booking_slot_lock_key(doctor_id: uuid.UUID, slot_time: datetime) -> str:
+    return f"{doctor_id}:{_normalize_utc(slot_time).isoformat()}"
+
+
+async def _booking_slot_lock(doctor_id: uuid.UUID, slot_time: datetime) -> asyncio.Lock:
+    key = _booking_slot_lock_key(doctor_id, slot_time)
+    with _BOOKING_SLOT_LOCKS_GUARD:
+        lock = _BOOKING_SLOT_LOCKS.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _BOOKING_SLOT_LOCKS[key] = lock
+    return lock
+
+
+def _normalize_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+async def _resolve_active_schedule_rows(session: AsyncSession, doctor_id: uuid.UUID, target_date: date) -> List[DoctorSchedule]:
+    weekday = target_date.weekday()
+    stmt = select(DoctorSchedule).where(
+        and_(
+            DoctorSchedule.doctor_id == doctor_id,
+            DoctorSchedule.is_active == True,
+            DoctorSchedule.weekday == weekday,
+            or_(
+                DoctorSchedule.effective_from.is_(None),
+                DoctorSchedule.effective_from <= target_date,
+            ),
+            or_(
+                DoctorSchedule.effective_to.is_(None),
+                DoctorSchedule.effective_to >= target_date,
+            ),
+        )
+    ).order_by(DoctorSchedule.start_time)
+    return (await session.execute(stmt)).scalars().all()
+
+
+def _slot_generator(start_time: time, end_time: time, slot_minutes: int, target_date: date) -> List[datetime]:
+    start_dt = datetime.combine(target_date, start_time, tzinfo=_IST)
+    end_dt = datetime.combine(target_date, end_time, tzinfo=_IST)
+    slots: List[datetime] = []
+    while start_dt < end_dt:
+        slots.append(start_dt.astimezone(timezone.utc))
+        start_dt += timedelta(minutes=slot_minutes)
     return slots
+
+
+async def _doctor_slot_times(session: AsyncSession, doctor_id: uuid.UUID, target_date: date) -> List[datetime]:
+    schedules = await _resolve_active_schedule_rows(session, doctor_id, target_date)
+    if not schedules:
+        return []
+
+    all_slots: List[datetime] = []
+    for schedule in schedules:
+        for slot in _slot_generator(schedule.start_time, schedule.end_time, schedule.slot_duration_minutes, target_date):
+            all_slots.append(slot)
+
+    if not all_slots:
+        return []
+
+    blocked_stmt = select(DoctorScheduleException).where(
+        and_(
+            DoctorScheduleException.doctor_id == doctor_id,
+            DoctorScheduleException.is_active == True,
+            DoctorScheduleException.start_datetime < datetime.combine(target_date, time(23, 59, 59), tzinfo=_IST).astimezone(timezone.utc),
+            DoctorScheduleException.end_datetime > datetime.combine(target_date, time(0, 0, 0), tzinfo=_IST).astimezone(timezone.utc),
+        )
+    )
+    blocked_ranges = (await session.execute(blocked_stmt)).scalars().all()
+    if blocked_ranges:
+        filtered: List[datetime] = []
+        for slot in all_slots:
+            slot_start = slot
+            slot_end = slot + timedelta(minutes=min(s.slot_duration_minutes for s in schedules))
+            if any(
+                ex.start_datetime < slot_end and ex.end_datetime > slot_start
+                for ex in blocked_ranges
+            ):
+                continue
+            filtered.append(slot)
+        all_slots = filtered
+
+    return sorted(set(all_slots))
 
 
 async def _enrich(appt: Appointment, session: AsyncSession) -> AppointmentRead:
@@ -79,7 +160,7 @@ async def list_appointments(
     appt_status: Optional[str] = Query(None, alias="status"),
     session: AsyncSession = Depends(get_session),
     _: dict = Depends(require_role(
-        "receptionist", "nurse", "doctor", "hospital_admin", "super_admin",
+        "receptionist", "nurse", "doctor", "hospital_admin",
     )),
 ):
     stmt = select(Appointment).order_by(Appointment.slot_time)
@@ -108,28 +189,43 @@ async def get_slots(
     slot_date: date = Query(..., alias="date"),
     session: AsyncSession = Depends(get_session),
     _: dict = Depends(require_role(
-        "receptionist", "hospital_admin", "super_admin",
+        "receptionist", "hospital_admin",
     )),
 ):
-    all_slots = _build_slot_times(slot_date)
-    # Day boundaries in IST to correctly bracket all clinic slots for the selected date
-    day_start = datetime.combine(slot_date, time(_DAY_START_HOUR, 0), tzinfo=_IST).astimezone(timezone.utc)
-    day_end = datetime.combine(slot_date, time(_DAY_END_HOUR, 0), tzinfo=_IST).astimezone(timezone.utc)
+    schedule_slots = await _doctor_slot_times(session, doctor_id, slot_date)
+    if not schedule_slots:
+        return []
 
-    booked_stmt = select(Appointment.slot_time).where(
+    day_start = datetime.combine(slot_date, time(0, 0), tzinfo=_IST).astimezone(timezone.utc)
+    day_end = datetime.combine(slot_date, time(23, 59, 59), tzinfo=_IST).astimezone(timezone.utc)
+
+    booked_stmt = select(Appointment.slot_time, func.count(Appointment.id)).where(
         and_(
             Appointment.doctor_id == doctor_id,
             Appointment.slot_time >= day_start,
             Appointment.slot_time <= day_end,
             Appointment.status.notin_(["cancelled", "no_show"]),
         )
-    )
-    booked_times = set((await session.execute(booked_stmt)).scalars().all())
+    ).group_by(Appointment.slot_time)
+    booked_counts_raw = (await session.execute(booked_stmt)).all()
+    booked_counts = {
+        _normalize_utc(slot_time): count
+        for slot_time, count in booked_counts_raw
+    }
 
-    return [
-        SlotInfo(slot_time=s, is_available=(s not in booked_times))
-        for s in all_slots
-    ]
+    results: List[SlotInfo] = []
+    for slot in schedule_slots:
+        schedule = next(
+            (s for s in await _resolve_active_schedule_rows(session, doctor_id, slot_date) if
+             slot.astimezone(_IST).time() >= s.start_time and slot.astimezone(_IST).time() < s.end_time),
+            None,
+        )
+        if schedule is None:
+            continue
+        slot_count = booked_counts.get(_normalize_utc(slot), 0)
+        is_available = slot_count < schedule.capacity
+        results.append(SlotInfo(slot_time=slot, is_available=is_available))
+    return results
 
 
 # ── Create / Book ─────────────────────────────────────────────────────────────
@@ -139,7 +235,7 @@ async def book_appointment(
     payload: AppointmentCreate,
     session: AsyncSession = Depends(get_session),
     current_user: dict = Depends(require_role(
-        "receptionist", "hospital_admin", "super_admin",
+        "receptionist", "hospital_admin",
     )),
 ):
     # Verify patient and doctor exist
@@ -150,34 +246,64 @@ async def book_appointment(
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
 
-    # Conflict check — same doctor, same slot
-    conflict = (await session.execute(
-        select(Appointment).where(
-            and_(
-                Appointment.doctor_id == payload.doctor_id,
-                Appointment.slot_time == payload.slot_time,
-                Appointment.status.notin_(["cancelled", "no_show"]),
-            )
-        )
-    )).scalar_one_or_none()
-    if conflict:
-        raise HTTPException(status_code=409, detail="Slot already booked for this doctor")
+    doctor_date = payload.slot_time.astimezone(_IST).date()
+    available_slots = await _doctor_slot_times(session, payload.doctor_id, doctor_date)
+    schedule_rows = await _resolve_active_schedule_rows(session, payload.doctor_id, doctor_date)
+    matching_schedule = None
+    for schedule in schedule_rows:
+        if payload.slot_time.astimezone(_IST).time() >= schedule.start_time and payload.slot_time.astimezone(_IST).time() < schedule.end_time:
+            matching_schedule = schedule
+            break
+    normalized_slot_time = _normalize_utc(payload.slot_time)
+    if matching_schedule is None or normalized_slot_time not in {_normalize_utc(slot) for slot in available_slots}:
+        raise HTTPException(status_code=409, detail="Slot is not available for this doctor schedule")
 
-    appt = Appointment(
-        id=uuid.uuid4(),
-        patient_id=payload.patient_id,
-        uhid=patient.uhid,
-        doctor_id=payload.doctor_id,
-        department_id=doctor.department_id if doctor else None,
-        slot_time=payload.slot_time,
-        type=payload.type,
-        notes=payload.notes,
-        status="scheduled",
-        booked_by_user_id=current_user.get("sub"),
-    )
-    session.add(appt)
-    await session.commit()
-    await session.refresh(appt)
+    slot_lock = await _booking_slot_lock(payload.doctor_id, payload.slot_time)
+    async with slot_lock:
+        # Hold the schedule row in the same transaction as the capacity read and insert.
+        # This prevents competing calls from both seeing the final seat as available.
+        backend_name = session.bind.url.get_backend_name() if session.bind is not None else ""
+        if backend_name == "sqlite" and not session.in_transaction():
+            await session.execute(text("BEGIN IMMEDIATE"))
+        elif backend_name != "sqlite":
+            await session.execute(
+                select(DoctorSchedule).where(DoctorSchedule.id == matching_schedule.id).with_for_update()
+            )
+
+        booked_count = (await session.execute(
+            select(func.count(Appointment.id)).where(
+                and_(
+                    Appointment.doctor_id == payload.doctor_id,
+                    Appointment.slot_time == normalized_slot_time,
+                    Appointment.status.notin_(["cancelled", "no_show"]),
+                )
+            )
+        )).scalar() or 0
+        if booked_count >= matching_schedule.capacity:
+            raise HTTPException(status_code=409, detail="Slot capacity reached for this doctor")
+
+        booked_by_user_id = None
+        if current_user.get("sub") is not None:
+            try:
+                booked_by_user_id = uuid.UUID(str(current_user["sub"]))
+            except (TypeError, ValueError):
+                booked_by_user_id = None
+
+        appt = Appointment(
+            id=uuid.uuid4(),
+            patient_id=payload.patient_id,
+            uhid=patient.uhid,
+            doctor_id=payload.doctor_id,
+            department_id=doctor.department_id if doctor else None,
+            slot_time=payload.slot_time,
+            type=payload.type,
+            notes=payload.notes,
+            status="scheduled",
+            booked_by_user_id=booked_by_user_id,
+        )
+        session.add(appt)
+        await session.commit()
+        await session.refresh(appt)
 
     tenant = current_user.get("tenant_schema", "public")
     await ws_manager.broadcast(tenant, "appointment:update", {
@@ -187,9 +313,13 @@ async def book_appointment(
     })
 
     # ── WhatsApp confirmation ─────────────────────────────────────────────
-    tenant_row = (await session.execute(
-        select(Tenant).where(Tenant.schema_name == tenant)
-    )).scalar_one_or_none()
+    tenant_row = None
+    try:
+        tenant_row = (await session.execute(
+            select(Tenant).where(Tenant.schema_name == tenant)
+        )).scalar_one_or_none()
+    except Exception:
+        tenant_row = None
     hospital_name = tenant_row.hospital_name if tenant_row else tenant
     send_appointment_confirmation(
         to_phone=patient.phone,
@@ -211,7 +341,7 @@ async def get_appointment(
     appt_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
     _: dict = Depends(require_role(
-        "receptionist", "nurse", "doctor", "hospital_admin", "super_admin",
+        "receptionist", "nurse", "doctor", "hospital_admin",
     )),
 ):
     appt = await session.get(Appointment, appt_id)
@@ -228,7 +358,7 @@ async def reschedule_appointment(
     payload: AppointmentReschedule,
     session: AsyncSession = Depends(get_session),
     current_user: dict = Depends(require_role(
-        "receptionist", "hospital_admin", "super_admin",
+        "receptionist", "hospital_admin",
     )),
 ):
     appt = await session.get(Appointment, appt_id)
@@ -279,7 +409,7 @@ async def cancel_appointment(
     appt_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
     current_user: dict = Depends(require_role(
-        "receptionist", "hospital_admin", "super_admin",
+        "receptionist", "hospital_admin",
     )),
 ):
     appt = await session.get(Appointment, appt_id)
@@ -311,7 +441,7 @@ async def checkin_appointment(
     body: CheckInBody = CheckInBody(),
     session: AsyncSession = Depends(get_session),
     current_user: dict = Depends(require_role(
-        "receptionist", "hospital_admin", "super_admin",
+        "receptionist", "hospital_admin",
     )),
 ):
     appt = await session.get(Appointment, appt_id)

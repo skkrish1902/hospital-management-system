@@ -21,8 +21,11 @@ class QueueToken(Base):
     token_no: Mapped[int] = mapped_column(Integer, nullable=False)
     queue_type: Mapped[str] = mapped_column(String(20), nullable=False)
     # queue_type: registration | vitals | consultation | pharmacy | billing
-    priority: Mapped[str] = mapped_column(String(20), nullable=False, default="normal")
-    # priority: emergency | senior_citizen | normal
+    priority: Mapped[str] = mapped_column(String(30), nullable=False, default="normal")
+    # priority: normal | senior_citizen | pregnant | disabled | urgent | emergency
+    priority_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    priority_assigned_by: Mapped[Optional[uuid.UUID]] = mapped_column(nullable=True)
+    priority_assigned_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="checked_in")
     # status: checked_in | completed | cancelled
     issued_at: Mapped[datetime] = mapped_column(

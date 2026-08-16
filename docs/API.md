@@ -15,7 +15,7 @@ Authenticated tenant APIs use `Authorization: Bearer <access-token>`. Tenant ide
 | --- | --- | --- |
 | Patients | `/api/v1/patients` | Patient identity and UHID |
 | Visits | `/api/v1/visits`, `/api/v1/visits/{visit_id}/tat` | `visit_id` encounter backbone |
-| Queue | `/api/v1/queue` | Queue token and visit |
+| Queue | `/api/v1/queue`, `/api/v1/queue/summary` | Queue token, priority metadata, visit and SLA summary |
 | Pre-vitals | `/api/v1/vitals` | Visit |
 | Consultation | `/api/v1/consultations` | Visit |
 | Prescriptions | `/api/v1/prescriptions` | Visit and consultation |
@@ -32,6 +32,12 @@ Authenticated tenant APIs use `Authorization: Bearer <access-token>`. Tenant ide
 ## TAT
 
 `GET /api/v1/visits/{visit_id}/tat` returns persisted semantic timestamps and calculated seconds for nurse wait, pre-vitals, doctor wait, consultation, total OPD, lab, pharmacy, and billing stages. Missing timestamps produce `null`, not an inferred duration.
+
+## Queue SLA and Priority
+
+`GET /api/v1/queue/summary` returns waiting counts, longest persisted wait, breach counts, and the configured SLA threshold for `WAITING_FOR_NURSE` and `WAITING_FOR_DOCTOR`. Configure thresholds with `QUEUE_SLA_NURSE_MINUTES` and `QUEUE_SLA_DOCTOR_MINUTES`.
+
+Queue priorities are `normal`, `senior_citizen`, `pregnant`, `disabled`, `urgent`, and `emergency`. Non-normal assignments should include `priority_reason`; the API persists the assigning user and timestamp and records priority changes in the tenant audit log.
 
 ## Webhooks and WebSockets
 

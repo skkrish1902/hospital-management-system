@@ -15,6 +15,7 @@ import { patientService } from '@/services/patientService'
 import { labService } from '@/services/labService'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import type { Visit, Vitals, PatientHistoryItem, Consultation } from '@/types/common'
+import ClinicalAlertBanner from '@/components/shared/ClinicalAlertBanner'
 
 function PriorityBadge({ priority }: { priority?: string }) {
   if (!priority || priority === 'normal') return null
@@ -400,6 +401,7 @@ export default function ConsultationPage() {
           <PatientHistoryPanel history={patientHistory} loading={historyLoading} />
         ) : (
           <>
+            <ClinicalAlertBanner patientId={selectedVisit.patient_id} />
             {/* Vitals summary */}
             {vitals && (
               <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-xl p-4">

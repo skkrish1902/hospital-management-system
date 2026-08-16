@@ -36,7 +36,7 @@ def validate_lab_transition(current_status: str, new_status: str) -> None:
 async def create_lab_order(
     payload: LabOrderCreate,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("doctor", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("doctor", "hospital_admin")),
 ):
     """Doctor creates a lab order for a visit."""
     visit = await session.get(Visit, payload.visit_id)
@@ -78,7 +78,7 @@ async def create_lab_order(
 async def list_lab_orders(
     status_filter: Optional[str] = Query(None, alias="status"),
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("nurse", "doctor", "lab_technician", "receptionist", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("nurse", "doctor", "lab_technician", "receptionist", "hospital_admin")),
 ):
     stmt = select(LabOrder).order_by(LabOrder.ordered_at.asc())
     if status_filter:
@@ -98,7 +98,7 @@ async def update_lab_order_status(
     order_id: uuid.UUID,
     new_status: str,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("nurse", "doctor", "lab_technician", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("nurse", "doctor", "lab_technician", "hospital_admin")),
 ):
     """Advance a lab order through its independent lifecycle."""
     order = await session.get(LabOrder, order_id)
@@ -144,7 +144,7 @@ async def update_lab_order_status(
 async def reject_lab_order(
     order_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("lab_technician", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("lab_technician", "hospital_admin")),
 ):
     """Reject a sample (contaminated/insufficient) — resets order to 'ordered' for recollection."""
     order = await session.get(LabOrder, order_id)
@@ -181,7 +181,7 @@ async def enter_lab_results(
     order_id: uuid.UUID,
     payload: LabResultCreate,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("nurse", "doctor", "lab_technician", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("nurse", "doctor", "lab_technician", "hospital_admin")),
 ):
     """Enter results for a processing lab order and mark it result-ready."""
     order = await session.get(LabOrder, order_id)
@@ -232,7 +232,7 @@ async def enter_lab_results(
 async def verify_lab_results(
     order_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("lab_technician", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("lab_technician", "hospital_admin")),
 ):
     order = await session.get(LabOrder, order_id)
     if not order:
@@ -267,7 +267,7 @@ async def upload_lab_report(
     order_id: uuid.UUID,
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("lab_technician", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("lab_technician", "hospital_admin")),
 ):
     """Upload a PDF/image report file and attach it to the existing LabResult."""
     if file.content_type not in ALLOWED_MIME:
@@ -416,7 +416,7 @@ async def download_lab_report(
 async def get_lab_results(
     order_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_role("nurse", "doctor", "lab_technician", "receptionist", "hospital_admin", "super_admin")),
+    _: dict = Depends(require_role("nurse", "doctor", "lab_technician", "receptionist", "hospital_admin")),
 ):
     result = (await session.execute(
         select(LabResult).where(LabResult.lab_order_id == order_id)

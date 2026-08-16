@@ -10,6 +10,7 @@ import { pharmacyService } from '@/services/pharmacyService'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import PharmacyDispenseModal from './PharmacyDispenseModal'
 import type { PharmacyQueueItem } from '@/types/common'
+import ClinicalAlertBanner from '@/components/shared/ClinicalAlertBanner'
 
 export default function PharmacyPage() {
   const qc = useQueryClient()
@@ -108,6 +109,7 @@ function PharmacyCard({
           <div className="flex items-center gap-2 mb-1">
             <p className="font-semibold text-gray-900">{item.patient_name || 'Patient'}</p>
           </div>
+          <ClinicalAlertBanner patientId={item.patient_id} />
           <p className="text-xs text-gray-400">{new Date(item.updated_at).toLocaleTimeString()}</p>
 
           {item.medicines && item.medicines.length > 0 && (

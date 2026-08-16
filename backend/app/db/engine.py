@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
 
@@ -29,12 +30,24 @@ class _TenantSession(AsyncSession):
         schema = tenant_schema_var.get()
         await self.execute(text(f'SET search_path TO "{schema}", public'))
 
+engine_kwargs = {
+    "echo": settings.DEBUG,
+    "pool_pre_ping": True,
+}
+if settings.DATABASE_URL.startswith("sqlite"):
+    engine_kwargs.update({
+        "poolclass": StaticPool,
+        "connect_args": {"check_same_thread": False},
+    })
+else:
+    engine_kwargs.update({
+        "pool_size": 10,
+        "max_overflow": 20,
+    })
+
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=settings.DEBUG,
-    pool_size=10,
-    max_overflow=20,
-    pool_pre_ping=True,
+    **engine_kwargs,
 )
 
 AsyncSessionLocal = async_sessionmaker(

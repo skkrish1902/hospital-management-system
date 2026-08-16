@@ -21,6 +21,7 @@ import { useAuthStore } from '@/features/auth/authStore'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { printPrescription } from '@/utils/printPrescription'
 import type { Visit } from '@/types/common'
+import ClinicalAlertBanner from '@/components/shared/ClinicalAlertBanner'
 
 function PriorityBadge({ priority }: { priority?: string }) {
   if (!priority || priority === 'normal') return null
@@ -326,6 +327,7 @@ export default function NurseVitalsPage() {
                   </button>
                   {selectedVisit?.id === v.id && (
                     <form onSubmit={handleSubmit(onSubmit)} className="px-5 pb-5 pt-3 bg-blue-50 border-t border-blue-100 space-y-4">
+                      <ClinicalAlertBanner patientId={v.patient_id} />
                       {vitalsError && (
                         <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
                           Failed to save vitals. Please try again.

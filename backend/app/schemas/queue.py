@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -11,8 +11,8 @@ class QueueTokenCreate(BaseModel):
     department_id: Optional[uuid.UUID] = None
     doctor_id: Optional[uuid.UUID] = None
     queue_type: str = "registration"   # registration | vitals | consultation | pharmacy | billing
-    priority: str = "normal"           # emergency | senior_citizen | normal
-    waive_fee: bool = False            # True = follow-up within 7 days, skip invoice/Razorpay
+    priority: Literal["normal", "senior_citizen", "pregnant", "disabled", "urgent", "emergency"] = "normal"
+    priority_reason: Optional[str] = None
     waive_fee: bool = False            # True = follow-up within 7 days, skip invoice/Razorpay
 
 
@@ -25,6 +25,9 @@ class QueueTokenRead(BaseModel):
     token_no: int
     queue_type: str
     priority: str
+    priority_reason: Optional[str] = None
+    priority_assigned_by: Optional[uuid.UUID] = None
+    priority_assigned_at: Optional[datetime] = None
     status: str
     notes: Optional[str] = None
     issued_at: datetime
@@ -53,4 +56,5 @@ class CancelTokenRequest(BaseModel):
 class QueueTokenUpdate(BaseModel):
     department_id: Optional[uuid.UUID] = None
     doctor_id: Optional[uuid.UUID] = None
-    priority: Optional[str] = None
+    priority: Optional[Literal["normal", "senior_citizen", "pregnant", "disabled", "urgent", "emergency"]] = None
+    priority_reason: Optional[str] = None

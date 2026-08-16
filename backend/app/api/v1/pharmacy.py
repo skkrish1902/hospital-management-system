@@ -41,7 +41,7 @@ router = APIRouter(dependencies=[Depends(require_feature("pharmacy"))])
 async def list_pharmacy_queue(
     status_filter: Optional[str] = Query(None, alias="status"),
     session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_role("pharmacist", "nurse", "receptionist", "hospital_admin", "super_admin")),
+    _: dict = Depends(require_role("pharmacist", "nurse", "receptionist", "hospital_admin")),
 ):
     """Returns pharmacy queue items, optionally filtered by status."""
     stmt = select(PharmacyQueue).order_by(PharmacyQueue.updated_at.asc())
@@ -58,6 +58,7 @@ async def list_pharmacy_queue(
             item.medicines = rx.medicines
             visit = await session.get(Visit, rx.visit_id)
             if visit:
+                item.patient_id = visit.patient_id
                 patient = await session.get(Patient, visit.patient_id)
                 if patient:
                     item.patient_name = f"{patient.first_name} {patient.last_name}"
@@ -70,7 +71,7 @@ async def update_pharmacy_status(
     pq_id: uuid.UUID,
     payload: PharmacyStatusUpdate,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("pharmacist", "nurse", "receptionist", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("pharmacist", "nurse", "receptionist", "hospital_admin")),
 ):
     pq = await session.get(PharmacyQueue, pq_id)
     if not pq:
@@ -121,6 +122,7 @@ async def update_pharmacy_status(
         item.medicines = rx.medicines
         visit = await session.get(Visit, rx.visit_id)
         if visit:
+            item.patient_id = visit.patient_id
             patient = await session.get(Patient, visit.patient_id)
             if patient:
                 item.patient_name = f"{patient.first_name} {patient.last_name}"
@@ -190,7 +192,7 @@ async def bill_pharmacy_dispense(
     payload: PharmacyBillCreate,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("pharmacist", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("pharmacist", "hospital_admin")),
 ):
     """
     Create an invoice for pharmacy dispense and optionally trigger Razorpay order.
@@ -405,7 +407,7 @@ async def bill_pharmacy_dispense(
 async def verify_pharmacy_payment(
     pq_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(require_role("pharmacist", "hospital_admin", "super_admin")),
+    current_user: dict = Depends(require_role("pharmacist", "hospital_admin")),
 ):
     """
     Verify if Razorpay payment was captured for a pharmacy dispense.
