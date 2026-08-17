@@ -65,6 +65,7 @@ export const useAuthStore = create<AuthState>()(
         set({
           accessToken: access,
           refreshToken: refresh,
+          sessionExpired: false,
           features,
           user: {
             id: payload.sub as string,

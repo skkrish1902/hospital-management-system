@@ -34,17 +34,19 @@ def generate_temp_password(length: int = 10) -> str:
 
 
 def create_access_token(subject: str, extra_claims: Optional[Dict[str, Any]] = None) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {"sub": subject, "exp": expire, "type": "access"}
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    payload = {"sub": subject, "iat": int(now.timestamp()), "exp": expire, "type": "access"}
     if extra_claims:
         payload.update(extra_claims)
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
 def create_refresh_token(subject: str) -> str:
+    now = datetime.now(timezone.utc)
     jti = str(uuid.uuid4())  # Unique token ID — used for blocklist on logout
-    expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    payload = {"sub": subject, "exp": expire, "type": "refresh", "jti": jti}
+    expire = now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    payload = {"sub": subject, "iat": int(now.timestamp()), "exp": expire, "type": "refresh", "jti": jti}
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 

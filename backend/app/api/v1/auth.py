@@ -74,9 +74,9 @@ async def login(payload: LoginRequest, session: AsyncSession = Depends(get_sessi
             "tenant_id": str(user.tenant_id),
             "tenant_schema": tenant.schema_name,
             "hospital_name": tenant.hospital_name,
-            "logo_url": tenant.logo_url,
-            "primary_color": tenant.primary_color,
-            "secondary_color": tenant.secondary_color,
+            "logo_url": getattr(tenant, "logo_url", None),
+            "primary_color": getattr(tenant, "primary_color", None),
+            "secondary_color": getattr(tenant, "secondary_color", None),
             "full_name": user.full_name,
             "features": await _load_enabled_features(user.tenant_id, session),
             "must_change_password": bool(user.must_change_password),
@@ -121,8 +121,8 @@ async def refresh(payload: RefreshRequest, session: AsyncSession = Depends(get_s
     if user.role != "super_admin" and user.tenant_id:
         forced_logout_time = await get_tenant_forced_logout_time(str(user.tenant_id))
         if forced_logout_time is not None:
-            token_iat = token_data.get("iat", 0)
-            if token_iat < forced_logout_time:
+            token_iat = token_data.get("iat")
+            if token_iat is not None and token_iat < forced_logout_time:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Your session has been invalidated. Please log in again.",
@@ -147,9 +147,9 @@ async def refresh(payload: RefreshRequest, session: AsyncSession = Depends(get_s
             "tenant_id": str(user.tenant_id),
             "tenant_schema": tenant.schema_name,
             "hospital_name": tenant.hospital_name,
-            "logo_url": tenant.logo_url,
-            "primary_color": tenant.primary_color,
-            "secondary_color": tenant.secondary_color,
+            "logo_url": getattr(tenant, "logo_url", None),
+            "primary_color": getattr(tenant, "primary_color", None),
+            "secondary_color": getattr(tenant, "secondary_color", None),
             "full_name": user.full_name,
             "features": await _load_enabled_features(user.tenant_id, session),
             "must_change_password": bool(user.must_change_password),
@@ -233,6 +233,9 @@ async def change_password(
             "tenant_id": str(user.tenant_id),
             "tenant_schema": tenant.schema_name,
             "hospital_name": tenant.hospital_name,
+            "logo_url": getattr(tenant, "logo_url", None),
+            "primary_color": getattr(tenant, "primary_color", None),
+            "secondary_color": getattr(tenant, "secondary_color", None),
             "full_name": user.full_name,
             "features": await _load_enabled_features(user.tenant_id, session),
             "must_change_password": False,

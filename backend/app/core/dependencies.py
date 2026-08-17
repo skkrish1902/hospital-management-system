@@ -41,8 +41,8 @@ async def get_current_user(
         if tenant_id_str:
             forced_logout_time = await get_tenant_forced_logout_time(tenant_id_str)
             if forced_logout_time is not None:
-                token_iat = payload.get("iat", 0)
-                if token_iat < forced_logout_time:
+                token_iat = payload.get("iat")
+                if token_iat is not None and token_iat < forced_logout_time:
                     raise session_invalidated_exception
 
         return payload
