@@ -35,6 +35,9 @@ class TenantListItem(BaseModel):
     schema_name: str
     contact_email: str
     contact_phone: str | None
+    logo_url: str | None
+    primary_color: str | None
+    secondary_color: str | None
     plan: str
     is_active: bool
     enabled_features: list[str]
@@ -49,6 +52,9 @@ class TenantDetail(BaseModel):
     schema_name: str
     contact_email: str
     contact_phone: str | None
+    logo_url: str | None
+    primary_color: str | None
+    secondary_color: str | None
     plan: str
     is_active: bool
     features: dict[str, bool]   # {feature_key: enabled}
@@ -62,6 +68,9 @@ class TenantUpdate(BaseModel):
     contact_phone: str | None = None
     plan: str | None = None
     is_active: bool | None = None
+    logo_url: str | None = None
+    primary_color: str | None = None
+    secondary_color: str | None = None
 
 
 class FeatureBulkSet(BaseModel):
@@ -78,6 +87,9 @@ class CreateTenantRequest(BaseModel):
     contact_email: str
     contact_phone: str | None = None
     plan: str = "starter"
+    logo_url: str | None = None
+    primary_color: str | None = None
+    secondary_color: str | None = None
 
 
 class CreateTenantResponse(BaseModel):
@@ -86,6 +98,9 @@ class CreateTenantResponse(BaseModel):
     schema_name: str
     contact_email: str
     contact_phone: str | None
+    logo_url: str | None
+    primary_color: str | None
+    secondary_color: str | None
     plan: str
     username: str
     default_password: str
@@ -113,6 +128,13 @@ def _validate_schema_name(schema_name: str) -> None:
         )
 
 
+def _validate_color(value: str | None, field: str) -> str | None:
+    if value is None or value == "":
+        return None
+    color = value.strip()
+    if not re.match(r"^#[0-9a-fA-F]{6}$", color):
+        raise HTTPException(status_code=422, detail=f"{field} must be a 6-digit hex color such as #2563eb.")
+    return color.lower()
 async def _generate_admin_username(session: AsyncSession) -> str:
     """Return 'hospitalAdmin', 'hospitalAdmin2', … — first globally available."""
     base = "hospitalAdmin"
@@ -198,6 +220,9 @@ async def list_tenants(
             schema_name=tenant.schema_name,
             contact_email=tenant.contact_email,
             contact_phone=tenant.contact_phone,
+            logo_url=tenant.logo_url,
+            primary_color=tenant.primary_color,
+            secondary_color=tenant.secondary_color,
             plan=tenant.plan,
             is_active=tenant.is_active,
             enabled_features=enabled,
@@ -220,6 +245,9 @@ async def get_tenant(
         schema_name=tenant.schema_name,
         contact_email=tenant.contact_email,
         contact_phone=tenant.contact_phone,
+        logo_url=tenant.logo_url,
+        primary_color=tenant.primary_color,
+        secondary_color=tenant.secondary_color,
         plan=tenant.plan,
         is_active=tenant.is_active,
         features=feature_map,
@@ -261,6 +289,13 @@ async def update_tenant(
     if body.is_active is not None:
         tenant.is_active = body.is_active
 
+    if body.logo_url is not None:
+        tenant.logo_url = body.logo_url.strip() or None
+    if body.primary_color is not None:
+        tenant.primary_color = _validate_color(body.primary_color, "primary_color")
+    if body.secondary_color is not None:
+        tenant.secondary_color = _validate_color(body.secondary_color, "secondary_color")
+
     await session.commit()
     await session.refresh(tenant)
 
@@ -271,6 +306,9 @@ async def update_tenant(
         schema_name=tenant.schema_name,
         contact_email=tenant.contact_email,
         contact_phone=tenant.contact_phone,
+        logo_url=tenant.logo_url,
+        primary_color=tenant.primary_color,
+        secondary_color=tenant.secondary_color,
         plan=tenant.plan,
         is_active=tenant.is_active,
         features=feature_map,
@@ -310,6 +348,9 @@ async def bulk_set_features(
         schema_name=tenant.schema_name,
         contact_email=tenant.contact_email,
         contact_phone=tenant.contact_phone,
+        logo_url=tenant.logo_url,
+        primary_color=tenant.primary_color,
+        secondary_color=tenant.secondary_color,
         plan=tenant.plan,
         is_active=tenant.is_active,
         features=updated_map,
@@ -354,6 +395,9 @@ async def toggle_feature(
         schema_name=tenant.schema_name,
         contact_email=tenant.contact_email,
         contact_phone=tenant.contact_phone,
+        logo_url=tenant.logo_url,
+        primary_color=tenant.primary_color,
+        secondary_color=tenant.secondary_color,
         plan=tenant.plan,
         is_active=tenant.is_active,
         features=feature_map,
@@ -381,6 +425,9 @@ async def create_tenant(
             detail=f"Invalid plan. Must be one of: {list(PLAN_FEATURES.keys())}",
         )
 
+    primary_color = _validate_color(body.primary_color, "primary_color")
+    secondary_color = _validate_color(body.secondary_color, "secondary_color")
+
     # Uniqueness check
     dup_schema = (await session.execute(
         select(Tenant.id).where(Tenant.schema_name == body.schema_name)
@@ -401,6 +448,9 @@ async def create_tenant(
         schema_name=body.schema_name,
         contact_email=body.contact_email,
         contact_phone=body.contact_phone,
+        logo_url=body.logo_url.strip() if body.logo_url else None,
+        primary_color=primary_color,
+        secondary_color=secondary_color,
         plan=body.plan,
         is_active=True,
     )
@@ -457,6 +507,9 @@ async def create_tenant(
         schema_name=tenant.schema_name,
         contact_email=tenant.contact_email,
         contact_phone=tenant.contact_phone,
+        logo_url=tenant.logo_url,
+        primary_color=tenant.primary_color,
+        secondary_color=tenant.secondary_color,
         plan=tenant.plan,
         username=username,
         default_password=default_password,

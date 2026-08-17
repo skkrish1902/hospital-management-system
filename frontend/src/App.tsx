@@ -25,6 +25,7 @@ import TenantsPage from '@/features/super_admin/TenantsPage'
 import RequisitionsPage from '@/features/requisitions/RequisitionsPage'
 
 import { useAuthStore } from '@/features/auth/authStore'
+import TenantBranding from '@/components/shared/TenantBranding'
 
 const ADMIN = ['hospital_admin']
 const DOCTOR = ['doctor', ...ADMIN]
@@ -87,6 +88,7 @@ function SessionExpiredModal() {
 export default function App() {
   return (
     <BrowserRouter>
+      <TenantBranding />
       <SessionExpiredModal />
       <Routes>
         {/* Public routes */}

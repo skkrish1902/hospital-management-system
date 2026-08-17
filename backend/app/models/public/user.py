@@ -19,6 +19,9 @@ class Tenant(Base, TimestampMixin):
     hospital_name: Mapped[str] = mapped_column(String(255), nullable=False)
     contact_email: Mapped[str] = mapped_column(String(255), nullable=False)
     contact_phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    logo_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    primary_color: Mapped[Optional[str]] = mapped_column(String(7), nullable=True)
+    secondary_color: Mapped[Optional[str]] = mapped_column(String(7), nullable=True)
     plan: Mapped[str] = mapped_column(String(50), default="enterprise", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 

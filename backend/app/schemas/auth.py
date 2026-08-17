@@ -16,6 +16,9 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     must_change_password: bool = False
+    logo_url: str | None = None
+    primary_color: str | None = None
+    secondary_color: str | None = None
 
 
 class RefreshRequest(BaseModel):

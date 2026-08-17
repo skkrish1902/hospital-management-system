@@ -9,6 +9,9 @@ interface AuthUser {
   tenantSchema: string
   hospitalName: string
   mustChangePassword: boolean
+  logoUrl?: string
+  primaryColor?: string
+  secondaryColor?: string
 }
 
 interface AuthState {
@@ -71,6 +74,9 @@ export const useAuthStore = create<AuthState>()(
             tenantSchema: (payload.tenant_schema as string) ?? '',
             hospitalName: (payload.hospital_name as string) ?? '',
             mustChangePassword: Boolean(payload.must_change_password),
+            logoUrl: (payload.logo_url as string) || undefined,
+            primaryColor: (payload.primary_color as string) || undefined,
+            secondaryColor: (payload.secondary_color as string) || undefined,
           },
         })
       },

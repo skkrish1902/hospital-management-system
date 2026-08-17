@@ -74,6 +74,9 @@ async def login(payload: LoginRequest, session: AsyncSession = Depends(get_sessi
             "tenant_id": str(user.tenant_id),
             "tenant_schema": tenant.schema_name,
             "hospital_name": tenant.hospital_name,
+            "logo_url": tenant.logo_url,
+            "primary_color": tenant.primary_color,
+            "secondary_color": tenant.secondary_color,
             "full_name": user.full_name,
             "features": await _load_enabled_features(user.tenant_id, session),
             "must_change_password": bool(user.must_change_password),
@@ -86,6 +89,9 @@ async def login(payload: LoginRequest, session: AsyncSession = Depends(get_sessi
         access_token=access_token,
         refresh_token=refresh_token,
         must_change_password=bool(user.must_change_password) if user.role != "super_admin" else False,
+        logo_url=extra_claims.get("logo_url"),
+        primary_color=extra_claims.get("primary_color"),
+        secondary_color=extra_claims.get("secondary_color"),
     )
 
 
@@ -141,6 +147,9 @@ async def refresh(payload: RefreshRequest, session: AsyncSession = Depends(get_s
             "tenant_id": str(user.tenant_id),
             "tenant_schema": tenant.schema_name,
             "hospital_name": tenant.hospital_name,
+            "logo_url": tenant.logo_url,
+            "primary_color": tenant.primary_color,
+            "secondary_color": tenant.secondary_color,
             "full_name": user.full_name,
             "features": await _load_enabled_features(user.tenant_id, session),
             "must_change_password": bool(user.must_change_password),
@@ -152,6 +161,9 @@ async def refresh(payload: RefreshRequest, session: AsyncSession = Depends(get_s
         access_token=access_token,
         refresh_token=new_refresh,
         must_change_password=bool(user.must_change_password) if user.role != "super_admin" else False,
+        logo_url=extra_claims.get("logo_url"),
+        primary_color=extra_claims.get("primary_color"),
+        secondary_color=extra_claims.get("secondary_color"),
     )
 
 

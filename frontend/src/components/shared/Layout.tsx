@@ -178,6 +178,8 @@ export default function AppLayout() {
   const [hovered, setHovered] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hospitalName = user?.hospitalName ?? 'Hospital'
+  const tenantLogo = user?.logoUrl || hospitalLogo
 
   const openUserMenu = () => {
     if (closeTimer.current) clearTimeout(closeTimer.current)
@@ -190,7 +192,6 @@ export default function AppLayout() {
 
   const handleLogout = async () => {
     // Revoke the refresh token on the server before clearing local state.
-    // Use raw fetch to avoid apiClient's interceptor loop on failures.
     if (refreshToken) {
       try {
         await fetch('/api/v1/auth/logout', {
@@ -270,7 +271,7 @@ export default function AppLayout() {
           {/* Left: logo + hospital / platform name — always visible */}
           <div className="flex items-center gap-2">
             {user?.role !== 'super_admin' && (
-              <img src={hospitalLogo} alt="logo" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+              <img src={tenantLogo} alt={`${hospitalName} logo`} className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
             )}
             {user?.role === 'super_admin' ? (
               <div>

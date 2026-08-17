@@ -14,6 +14,9 @@ interface TenantListItem {
   schema_name: string
   contact_email: string
   contact_phone: string | null
+  logo_url: string | null
+  primary_color: string | null
+  secondary_color: string | null
   plan: string
   is_active: boolean
   enabled_features: string[]
@@ -84,7 +87,7 @@ interface CreateTenantResponse {
 const superApi = {
   listTenants: () => apiClient.get<TenantListItem[]>('/super/hospitals').then((r) => r.data),
   getTenant: (id: string) => apiClient.get<TenantDetail>(`/super/hospitals/${id}`).then((r) => r.data),
-  updateTenant: (id: string, body: { hospital_name?: string; contact_email?: string; contact_phone?: string; plan?: string; is_active?: boolean }) =>
+  updateTenant: (id: string, body: { hospital_name?: string; contact_email?: string; contact_phone?: string; plan?: string; is_active?: boolean; logo_url?: string; primary_color?: string; secondary_color?: string }) =>
     apiClient.patch<TenantDetail>(`/super/hospitals/${id}`, body).then((r) => r.data),
   bulkSetFeatures: (id: string, enabledFeatures: string[]) =>
     apiClient.put<TenantDetail>(`/super/hospitals/${id}/features`, { enabled_features: enabledFeatures }).then((r) => r.data),
@@ -148,6 +151,9 @@ function EditTenantModal({
   const [contactEmail, setContactEmail] = useState(tenant.contact_email)
   const [contactPhone, setContactPhone] = useState(tenant.contact_phone ?? '')
   const [isActive, setIsActive] = useState(tenant.is_active)
+  const [logoUrl, setLogoUrl] = useState(tenant.logo_url ?? '')
+  const [primaryColor, setPrimaryColor] = useState(tenant.primary_color ?? '#2563eb')
+  const [secondaryColor, setSecondaryColor] = useState(tenant.secondary_color ?? '#eff6ff')
 
   const save = useMutation({
     mutationFn: () =>
@@ -156,6 +162,9 @@ function EditTenantModal({
         contact_email: contactEmail.trim(),
         contact_phone: contactPhone.trim() || undefined,
         is_active: isActive,
+        logo_url: logoUrl.trim() || undefined,
+        primary_color: primaryColor,
+        secondary_color: secondaryColor,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['super-tenants'] })
@@ -173,6 +182,9 @@ function EditTenantModal({
     contactEmail.trim() !== tenant.contact_email ||
     (contactPhone.trim() || null) !== tenant.contact_phone ||
     isActive !== tenant.is_active
+    || logoUrl.trim() !== (tenant.logo_url ?? '')
+    || primaryColor !== (tenant.primary_color ?? '')
+    || secondaryColor !== (tenant.secondary_color ?? '')
   const canSave = changed && hospitalName.trim().length > 0 && contactEmail.trim().length > 0 && !save.isPending
 
   return (
@@ -219,6 +231,18 @@ function EditTenantModal({
                 placeholder="+91 98765 43210"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
               />
+            </div>
+
+            <div className="border-t border-gray-100 pt-4 space-y-4">
+              <h3 className="text-sm font-semibold text-gray-800">Hospital Branding</h3>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Logo URL <span className="text-gray-400 font-normal">(optional)</span></label>
+                <input type="url" value={logoUrl} onChange={e => setLogoUrl(e.target.value)} placeholder="https://cdn.example.com/logo.png" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-sm font-medium text-gray-700">Primary color<input type="color" value={primaryColor} onChange={e => setPrimaryColor(e.target.value)} className="mt-1 block h-10 w-full cursor-pointer rounded border border-gray-300 p-1" /></label>
+                <label className="text-sm font-medium text-gray-700">Secondary color<input type="color" value={secondaryColor} onChange={e => setSecondaryColor(e.target.value)} className="mt-1 block h-10 w-full cursor-pointer rounded border border-gray-300 p-1" /></label>
+              </div>
             </div>
 
             <div>
